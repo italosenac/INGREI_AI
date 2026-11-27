@@ -93,7 +93,7 @@ def command_reply(command, argument=""):
     """Free deterministic study commands; no model or external fetch."""
     if command in ("/start","/help"):
         return ("TechVerse English Tutor\n"
-                "Write in English, even if you make mistakes. I can suggest corrections, examples and exercises.\n"
+                "Write in English, even if you make mistakes. I reply to correct sentences too, and offer corrections and practice when needed.\n"
                 "/learn — browse lesson topics\n"
                 "/learn past — open a specific lesson\n"
                 "/listen I love English. — hear an English sentence\n"
@@ -111,3 +111,12 @@ def command_reply(command, argument=""):
             return "Learn more — "+title+":\n"+url
         return "Study topics: "+TOPICS+"\nUse /learn past or another topic from the list."
     return ""
+
+def conversation(raw):
+    import json
+    try:
+        data=json.loads(raw)
+        return safe_text(data.get("conversational_reply"),500)
+    except (ValueError,TypeError,AttributeError):
+        return ""
+
