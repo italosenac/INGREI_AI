@@ -7,7 +7,7 @@ import urllib.request
 import uuid
 from .knowledge import lesson, safe_text, CATALOG, conversation
 from .policy import decide
-from .inference import analyze_voice
+from .inference import analyze_voice, foreign_evidence, guard_language
 
 def voice_allowed(voice):
     return (isinstance(voice,dict) and isinstance(voice.get("file_id"),str)
@@ -77,6 +77,7 @@ def voice_feedback(text, confidence, infer=analyze_voice):
         return "I heard your recording, but I couldn't recognize the words reliably. Try again slowly, one short phrase at a time. You can also type what you meant.\n\nSpeaking practice: "+CATALOG["pronunciation"][1], ""
     tentative=confidence is not None and confidence<0.65
     raw=infer(("Uncertain speech hypotheses (not confirmed): "+text if tentative else text)[:2000])
+    if not tentative: raw=guard_language(text,raw)
     d=decide(raw)
     prefix=("Possible words I recognized: " if tentative else "What I understood: ")+safe_text(text,1000)+"\n\n"
     if not tentative and conversation(raw): prefix+=conversation(raw)+"\n\n"
@@ -119,7 +120,7 @@ def process_voice(token, group_id, message, telegram):
     telegram(token,"sendMessage",{"chat_id":group_id,"text":reply[:3500],
         "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
         "link_preview_options":{"is_disabled":True}})
-    if spoken:
+    if spoken and not foreign_evidence(spoken):
         try:
             send_voice(token,group_id,message["message_id"],spoken)
         except Exception:
