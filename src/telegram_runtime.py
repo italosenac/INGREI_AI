@@ -7,6 +7,8 @@ import os
 import urllib.request
 from .policy import decide, eligible
 from .inference import analyze
+from .knowledge import lesson
+from .speech import process_voice, voice_allowed
 
 def telegram(token, method, payload):
     request = urllib.request.Request(
@@ -31,17 +33,16 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram):
     text=message["text"].strip()
     if text.startswith("/") or not any(c.isalpha() for c in text):
         return "ignored"
-    decision=decide(infer(text))
+    raw=infer(text)
+    decision=decide(raw)
     if decision.action == "allow":
         return "allowed"
     if decision.action == "clarify":
         reply="Could you rephrase that in English?"
     elif decision.action == "warn":
-        reply="English only, please. Try: "+decision.correction
+        reply=lesson(raw,decision)
     else:
-        reply="Suggested correction: "+decision.correction
-        if decision.explanation:
-            reply+="\nWhy: "+decision.explanation
+        reply=lesson(raw,decision)
     send(token,"sendMessage",{"chat_id":group_id,"text":reply[:3500],
         "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":False},
         "link_preview_options":{"is_disabled":True}})
@@ -55,6 +56,17 @@ def handler(event, context):
         cfg=config()
         token=cfg["TELEGRAM_BOT_TOKEN"]
         if "requestContext" not in event:
+            if event.get("operation") == "voice_worker":
+                if expired(): return {"status":"expired"}
+                group_id=int(cfg.get("GROUP_ID",0))
+                message=event.get("message",{})
+                if not voice_eligible(message,group_id): return {"status":"ignored"}
+                try:
+                    return {"status":process_voice(token,group_id,message,telegram)}
+                except Exception:
+                    try: telegram(token,"sendMessage",{"chat_id":group_id,"text":"I could not process this recording. Please try again later.","reply_parameters":{"message_id":message["message_id"]}})
+                    except Exception: pass
+                    return {"status":"voice_error"}
             if event.get("operation") == "discover":
                 info=telegram(token,"getWebhookInfo",{})
                 if info.get("url"):
@@ -87,7 +99,7 @@ def handler(event, context):
         expected=cfg["WEBHOOK_SECRET"]
         if not hmac.compare_digest(headers.get("x-telegram-bot-api-secret-token",""),expected):
             return response(403)
-        if datetime.datetime.now(datetime.timezone.utc)>=datetime.datetime.fromisoformat(os.environ["EXPIRES_AT"]):
+        if expired():
             return response(200)
         body=event.get("body","")
         if len(body)>30000:
@@ -99,7 +111,8 @@ def handler(event, context):
         if not group_id:
             return response(200)
         message=update.get("message",{})
-        if not eligible(message,group_id):
+        is_voice=voice_eligible(message,group_id)
+        if not is_voice and not eligible(message,group_id):
             return response(200)
         # Atomic deduplication of update IDs, no message content retained.
         import boto3
@@ -114,23 +127,29 @@ def handler(event, context):
             raise
         if not consume_quota():
             return response(200)
-        handle_update(update,group_id,token)
+        if is_voice:
+            if not consume_quota("voice",((60,2),(86400,30))):
+                return response(200)
+            minimal={"chat":{"id":group_id,"type":message["chat"]["type"]},"from":{"is_bot":False},"message_id":message["message_id"],"voice":{k:message["voice"][k] for k in ("file_id","duration","file_size") if k in message["voice"]}}
+            boto3.client("lambda").invoke(FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],InvocationType="Event",Payload=json.dumps({"operation":"voice_worker","message":minimal}).encode())
+        else:
+            handle_update(update,group_id,token)
         return response(200)
     except Exception:
         # Never expose raw payload, token, or provider exception.
         return response(200) if "requestContext" in event else {"status":"error"}
 
 
-def consume_quota():
+def consume_quota(scope="text", limits=((60,20),(86400,500))):
     """Bound paid inference calls to 20/minute and 500/day for the entire group."""
     import boto3
     from botocore.exceptions import ClientError
     now=int(datetime.datetime.now(datetime.timezone.utc).timestamp())
     db=boto3.client("dynamodb")
-    for period,limit in ((60,20),(86400,500)):
+    for period,limit in limits:
         try:
             db.update_item(TableName=os.environ["DEDUP_TABLE"],
-                Key={"id":{"S":f"quota:{period}:{now//period}"}},
+                Key={"id":{"S":f"quota:{scope}:{period}:{now//period}"}},
                 UpdateExpression="SET expires = :expiry ADD #hits :one",
                 ConditionExpression="attribute_not_exists(#hits) OR #hits < :limit",
                 ExpressionAttributeNames={"#hits":"hits"},
@@ -140,3 +159,13 @@ def consume_quota():
                 return False
             raise
     return True
+
+
+def expired():
+    return datetime.datetime.now(datetime.timezone.utc)>=datetime.datetime.fromisoformat(os.environ["EXPIRES_AT"])
+
+def voice_eligible(message,group_id):
+    if not isinstance(message,dict): return False
+    chat=message.get("chat",{})
+    sender=message.get("from",{})
+    return bool(group_id and chat.get("id")==group_id and chat.get("type") in ("group","supergroup") and sender and not sender.get("is_bot",False) and voice_allowed(message.get("voice")))
