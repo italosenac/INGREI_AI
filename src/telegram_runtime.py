@@ -112,8 +112,31 @@ def handler(event, context):
             if exc.response["Error"]["Code"]=="ConditionalCheckFailedException":
                 return response(200)
             raise
+        if not consume_quota():
+            return response(200)
         handle_update(update,group_id,token)
         return response(200)
     except Exception:
         # Never expose raw payload, token, or provider exception.
         return response(200) if "requestContext" in event else {"status":"error"}
+
+
+def consume_quota():
+    """Bound paid inference calls to 20/minute and 500/day for the entire group."""
+    import boto3
+    from botocore.exceptions import ClientError
+    now=int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+    db=boto3.client("dynamodb")
+    for period,limit in ((60,20),(86400,500)):
+        try:
+            db.update_item(TableName=os.environ["DEDUP_TABLE"],
+                Key={"id":{"S":f"quota:{period}:{now//period}"}},
+                UpdateExpression="SET expires = :expiry ADD #hits :one",
+                ConditionExpression="attribute_not_exists(#hits) OR #hits < :limit",
+                ExpressionAttributeNames={"#hits":"hits"},
+                ExpressionAttributeValues={":expiry":{"N":str(now+period+86400)},":one":{"N":"1"},":limit":{"N":str(limit)}})
+        except ClientError as exc:
+            if exc.response["Error"]["Code"]=="ConditionalCheckFailedException":
+                return False
+            raise
+    return True
