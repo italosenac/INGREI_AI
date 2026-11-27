@@ -2,7 +2,7 @@ import unittest
 import json
 from src.telegram_runtime import handle_update, handle_pronunciation, pronunciation_target
 from src.knowledge import passage_parts, passage_batches, message_chunks
-from src.inference import review_passage, language_evidence, guard_language, analyze
+from src.inference import review_passage, language_evidence, guard_language, analyze, foreign_evidence
 
 class TelegramTests(unittest.TestCase):
     def setUp(self):
@@ -19,7 +19,7 @@ class TelegramTests(unittest.TestCase):
         self.assertEqual(self.calls[0][1]["chat_id"],-123)
         self.assertEqual(self.calls[0][1]["reply_parameters"]["message_id"],5)
         self.assertIn("🔊 Pronunciation: I went home.\n",self.calls[0][1]["text"])
-        self.assertEqual(self.calls[0][1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"],"pronounce:v1")
+        self.assertEqual(self.calls[0][1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"],"pronounce:v2")
     def test_foreign_group(self):
         self.assertEqual(handle_update(self.update,-456,"fake",self.infer,self.send),"ignored")
         self.assertEqual(self.calls,[])
@@ -145,3 +145,38 @@ class TelegramTests(unittest.TestCase):
         self.assertTrue(eligible(self.update["message"],-123))
         self.update["message"]["text"]+="x"
         self.assertFalse(eligible(self.update["message"],-123))
+
+    def test_foreign_language_not_praised(self):
+        samples=["Mi familia no es muy grande, somos cuatro personas.","Texto grande sem erro - ok. Com erro - nok.","Je suis très content de vous rencontrer.","Ich bin sehr froh, dass du hier bist.","今日は学校に行きます。"]
+        raw='{"category":"correct","conversational_reply":"Great!"}'
+        for sample in samples:
+            self.assertTrue(foreign_evidence(sample),sample)
+            self.calls.clear()
+            self.update["message"]["text"]=sample
+            handle_update(self.update,-123,"fake",lambda t:raw,self.send)
+            self.assertNotIn("That's correct!",self.calls[0][1]["text"])
+            self.assertNotIn("reply_markup",self.calls[0][1])
+    def test_foreign_translation_has_english_playback(self):
+        self.update["message"]["text"]="Mi familia no es muy grande."
+        raw=json.dumps({"category":"foreign_only","source_language":"es","correction":"My family is not very big.","explanation":"This is Spanish. Try English.","conversational_reply":"Tell me more about your family!"})
+        self.assertEqual(handle_update(self.update,-123,"fake",lambda t:raw,self.send),"warn")
+        self.assertIn("Pronunciation: My family is not very big.",self.calls[0][1]["text"])
+        self.assertNotIn("That's correct!",self.calls[0][1]["text"])
+    def test_legacy_foreign_playback_blocked(self):
+        cb={"id":"cb1","data":"pronounce:v1","from":{"id":7},"message":{"chat":{"id":-123,"type":"supergroup"},"from":{"is_bot":True,"username":"techverseEnglishBot"},"message_id":8,"text":"Old reply\n\n🔊 Pronunciation: Mi familia no es muy grande.\nWould you like to hear the pronunciation?"}}
+        self.assertEqual(handle_pronunciation(cb,-123,"fake",self.send,lambda *a:self.fail("foreign playback"),lambda *a:True),"foreign")
+    def test_foreign_misclassification_repaired(self):
+        class Client:
+            calls=0
+            def converse(self,**kw):
+                self.calls+=1
+                data={"category":"correct","source_language":"es"} if self.calls==1 else {"category":"foreign_only","source_language":"es","correction":"My family is not very big.","explanation":"This is Spanish."}
+                return {"stopReason":"end_turn","output":{"message":{"content":[{"text":json.dumps(data)}]}}}
+        client=Client()
+        result=json.loads(analyze("Mi familia no es muy grande.",client))
+        self.assertEqual(result["category"],"foreign_only")
+        self.assertEqual(result["correction"],"My family is not very big.")
+        self.assertEqual(client.calls,2)
+    def test_correct_english_with_international_words(self):
+        for sample in ["I went to Paris once.","I like pizza and pasta.","My friend is called Maria.","I love you very much."]:
+            self.assertFalse(foreign_evidence(sample))
