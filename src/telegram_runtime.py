@@ -35,7 +35,7 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram):
         command, _, arg=text.partition(" ")
         command, sep, target=command.lower().partition("@")
         if sep and target!="techverseenglishbot": return "ignored"
-        reply=command_reply(command,arg)
+        reply=("Reply to a voice note with /retry to analyze it again." if command=="/retry" else command_reply(command,arg))
         if reply:
             send(token,"sendMessage",{"chat_id":group_id,"text":reply,"reply_parameters":{"message_id":message["message_id"]},"link_preview_options":{"is_disabled":True}})
             return "command"
@@ -65,6 +65,13 @@ def voice_candidate(message,group_id):
     chat=message.get("chat",{})
     sender=message.get("from",{})
     return bool(group_id and chat.get("id")==group_id and chat.get("type") in ("group","supergroup") and sender and not sender.get("is_bot",False) and isinstance(message.get("voice"),dict))
+
+def retry_target(message,group_id):
+    if not eligible(message,group_id): return None
+    command=message["text"].strip().lower()
+    if command not in ("/retry","/retry@techverseenglishbot"): return None
+    original=message.get("reply_to_message")
+    return original if voice_candidate(original,group_id) else None
 
 def response(status):
     return {"statusCode":status,"body":""}
@@ -140,7 +147,8 @@ def handler(event, context):
         if not group_id:
             return response(200)
         message=update.get("message",{})
-        is_voice=voice_candidate(message,group_id)
+        retry=retry_target(message,group_id)
+        is_voice=voice_candidate(message,group_id) or retry is not None
         if not is_voice and not eligible(message,group_id):
             return response(200)
         # Atomic deduplication of update IDs, no message content retained.
@@ -155,6 +163,7 @@ def handler(event, context):
                 return response(200)
             raise
         if is_voice:
+            if retry is not None: message=retry
             if not voice_eligible(message,group_id):
                 if consume_quota("notice",((60,5),(86400,60))):
                     voice_notice(token,group_id,message,"Please send a voice note up to 30 seconds and 2 MB.")
