@@ -2,7 +2,7 @@ import unittest
 import json
 from src.telegram_runtime import handle_update, handle_pronunciation, pronunciation_target
 from src.knowledge import passage_parts, passage_batches, message_chunks
-from src.inference import review_passage
+from src.inference import review_passage, language_evidence, guard_language, analyze
 
 class TelegramTests(unittest.TestCase):
     def setUp(self):
@@ -127,3 +127,21 @@ class TelegramTests(unittest.TestCase):
         self.assertIsNone(review_passage(["one","two"],Client("end_turn",[{"id":1,"corrected":"one","errors":[]}])))
         self.assertIsNone(review_passage(["one"],Client("end_turn",[{"id":1,"corrected":"changed","errors":[]}])))
 
+
+    def test_portuguese_is_not_correct_english(self):
+        from src.inference import local_analysis
+        self.assertEqual(language_evidence("Eu gosto muito de você."),"portuguese")
+        self.assertEqual(language_evidence("I gosto de you."),"mixed")
+        self.assertEqual(language_evidence("I like you very much."),"unknown")
+        self.assertEqual(language_evidence("Ai laik iu."),"unknown")
+        raw='{"category":"correct","conversational_reply":"Great!"}'
+        self.assertEqual(json.loads(guard_language("Eu gosto muito de você.",raw))["category"],"unclear")
+        self.assertEqual(json.loads(guard_language("I gosto de you.",raw))["category"],"unclear")
+        self.assertEqual(guard_language("I like you very much.",raw),raw)
+        self.assertEqual(json.loads(analyze("Bom dia!"))["category"],"portuguese_only")
+    def test_full_telegram_length_eligible(self):
+        from src.policy import eligible
+        self.update["message"]["text"]="x"*4096
+        self.assertTrue(eligible(self.update["message"],-123))
+        self.update["message"]["text"]+="x"
+        self.assertFalse(eligible(self.update["message"],-123))
