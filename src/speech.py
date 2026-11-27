@@ -7,7 +7,7 @@ import urllib.request
 import uuid
 from .knowledge import lesson, safe_text, CATALOG
 from .policy import decide
-from .inference import analyze
+from .inference import analyze_voice
 
 def voice_allowed(voice):
     return (isinstance(voice,dict) and isinstance(voice.get("file_id"),str)
@@ -54,14 +54,21 @@ def transcribe_bytes(audio, client=None):
         raise RuntimeError("speech worker rejected recording")
     return data["text"].strip()[:2000],None
 
-def voice_feedback(text, confidence, infer=analyze):
+def voice_feedback(text, confidence, infer=analyze_voice):
     if not text or confidence is not None and confidence<0.65:
-        return "I couldn't understand the recording clearly. Please try again slowly in English.", ""
+        return "I heard your recording, but I couldn't recognize the words reliably. Try again slowly, one short phrase at a time. You can also type what you meant.\n\nSpeaking practice: "+CATALOG["pronunciation"][1], ""
     raw=infer(text[:2000])
     d=decide(raw)
     prefix="What I understood: "+safe_text(text,1000)+"\n\n"
     if d.action=="clarify":
-        return prefix+"Could you say that another way?", ""
+        try:
+            data=json.loads(raw)
+            possibilities=[safe_text(data.get(k),200) for k in ("possible_meaning","alternate_meaning")]
+        except (ValueError,AttributeError,TypeError):
+            possibilities=[]
+        suggestions=list(dict.fromkeys(p for p in possibilities if p))
+        hint="Possible meanings (not confirmed):\n"+"\n".join("- "+p for p in suggestions)+"\n\n" if suggestions else ""
+        return prefix+hint+"Which meaning did you intend? Please repeat slowly or type your intended sentence.\n\nSpeaking practice: "+CATALOG["pronunciation"][1], ""
     if d.action in ("correct","warn"):
         return prefix+lesson(raw,d)+"\n\nListen and repeat. Transcription is not a pronunciation score.",safe_text(d.correction,1000)
     if d.action=="allow":
@@ -70,7 +77,7 @@ def voice_feedback(text, confidence, infer=analyze):
         except (ValueError,AttributeError): category=None
         if category=="correct":
             return prefix+"Your transcribed sentence looks correct. Listen and repeat.\n\nListening practice: "+CATALOG["listening"][1]+"\n\nTranscription is not a pronunciation score.",safe_text(text,1000)
-    return prefix+"I couldn't assess the sentence reliably. Please try another recording.", ""
+    return prefix+"I couldn't assess the sentence reliably. Please try another recording or type what you meant.\n\nSpeaking practice: "+CATALOG["pronunciation"][1], ""
 
 def process_voice(token, group_id, message, telegram):
     voice=message["voice"]
@@ -86,7 +93,7 @@ def process_voice(token, group_id, message, telegram):
     text,confidence=transcribe_bytes(audio)
     reply,spoken=voice_feedback(text,confidence)
     telegram(token,"sendMessage",{"chat_id":group_id,"text":reply[:3500],
-        "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":False},
+        "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
         "link_preview_options":{"is_disabled":True}})
     if spoken:
         try:
