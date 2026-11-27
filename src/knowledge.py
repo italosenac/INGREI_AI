@@ -62,7 +62,7 @@ TOPICS = ", ".join(CATALOG)
 def safe_text(value, limit):
     if not isinstance(value,str):
         return ""
-    return re.sub(r"(?i)(?:https?://|www\\.|t\\.me/)[^\\s]+", "", value).strip()[:limit]
+    return re.sub(r"(?i)(?:[a-z][a-z0-9+.-]*://|www\.|t\.me/|(?:[a-z0-9-]+\.)+(?:com|org|net|io|edu|gov|co|me|info|xyz|example)\b)[^\s]*", "", value).strip()[:limit]
 def lesson(raw, decision):
     import json
     try:
