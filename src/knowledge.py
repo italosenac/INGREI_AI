@@ -98,6 +98,7 @@ def command_reply(command, argument=""):
                 "/learn past — open a specific lesson\n"
                 "/listen I love English. — hear an English sentence\n"
                 "/rules — group rules\n"
+                "/retry — reply to a voice note to analyze it again\n"
                 "Send a voice note up to 30 seconds when voice recognition is enabled.")
     if command=="/rules":
         return ("English only, please. Mistakes, mixed phrases and attempts are welcome! "
