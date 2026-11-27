@@ -32,7 +32,7 @@ def decide(raw: str, deletion_enabled: bool = False) -> Decision:
             return Decision("correct", correction.strip(), explanation.strip())
         if category == "unclear":
             return Decision("clarify")
-        if category == "portuguese_only" and correction.strip():
+        if category in ("portuguese_only","foreign_only") and correction.strip():
             return Decision("review" if deletion_enabled else "warn", correction.strip(), explanation.strip())
     except (ValueError, TypeError, RecursionError):
         pass
