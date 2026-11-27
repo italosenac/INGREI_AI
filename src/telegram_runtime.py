@@ -171,7 +171,7 @@ def handler(event, context):
             if os.environ.get("VOICE_INPUT_ENABLED","false").lower()!="true":
                 telegram(token,"sendMessage",{"chat_id":group_id,"text":"Voice recognition is temporarily unavailable. You can still practice listening with /listen followed by an English sentence.","reply_parameters":{"message_id":message["message_id"]}})
                 return response(200)
-            if not consume_quota("voice",((60,5),(86400,30))):
+            if not consume_quota("voice",((60,5),(86400,120))):
                 if consume_quota("notice",((60,5),(86400,60))):
                     voice_notice(token,group_id,message,"Voice practice limit reached. Please try again in a minute or tomorrow if the daily limit is reached.")
                 return response(200)
