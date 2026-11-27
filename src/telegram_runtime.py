@@ -7,7 +7,7 @@ import os
 import urllib.request
 from .policy import decide, eligible
 from .inference import analyze
-from .knowledge import lesson, command_reply, conversation
+from .knowledge import lesson, command_reply, conversation, safe_text
 from .speech import process_voice, voice_allowed, send_voice
 
 def telegram(token, method, payload):
@@ -47,17 +47,28 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram):
         raw="{}"
     decision=decide(raw)
     chat_reply=conversation(raw)
+    spoken=""
     if decision.action == "allow":
         try: correct=json.loads(raw).get("category")=="correct"
         except (ValueError,AttributeError,TypeError): correct=False
-        reply=chat_reply or ("Your English looks good! Let's keep talking." if correct else "I couldn't fully understand that. Could you tell me more?")
+        if correct:
+            reply="✅ That's correct! Well done!"+("\n\n"+chat_reply if chat_reply else "")
+            spoken=text
+        else:
+            reply=chat_reply or "I couldn't fully understand that. Could you tell me more?"
     elif decision.action == "clarify":
         reply=chat_reply or "Could you rephrase that in English?"
     else:
         reply=(chat_reply+"\n\n" if chat_reply else "")+lesson(raw,decision)
-    send(token,"sendMessage",{"chat_id":group_id,"text":reply[:3500],
+        if decision.action in ("correct","warn"): spoken=decision.correction
+    payload={"chat_id":group_id,"text":reply[:3000],
         "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
-        "link_preview_options":{"is_disabled":True}})
+        "link_preview_options":{"is_disabled":True}}
+    target=" ".join(safe_text(spoken,2000).split())
+    if target and len(target)<=500:
+        payload["text"]+="\n\n🔊 Pronunciation: "+target+"\nWould you like to hear the pronunciation?"
+        payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v1"}]]}
+    send(token,"sendMessage",payload)
     return decision.action
 
 def voice_notice(token,group_id,message,text,send=telegram):
@@ -75,6 +86,38 @@ def retry_target(message,group_id):
     if command not in ("/retry","/retry@techverseenglishbot"): return None
     original=message.get("reply_to_message")
     return original if voice_candidate(original,group_id) else None
+
+def pronunciation_target(callback,group_id):
+    if not isinstance(callback,dict) or callback.get("data")!="pronounce:v1": return ""
+    actor=callback.get("from",{})
+    message=callback.get("message",{})
+    chat=message.get("chat",{})
+    author=message.get("from",{})
+    if not group_id or chat.get("id")!=group_id or chat.get("type") not in ("group","supergroup"): return ""
+    if not actor.get("id") or actor.get("is_bot") or not author.get("is_bot") or str(author.get("username","")).lower()!="techverseenglishbot": return ""
+    text=message.get("text","")
+    if not isinstance(text,str): return ""
+    before,sep,tail=text.rpartition("\n\n🔊 Pronunciation: ")
+    target,sep2,end=tail.partition("\nWould you like to hear the pronunciation?")
+    return target if sep and sep2 and not end and 0<len(target)<=500 and "\n" not in target else ""
+
+def handle_pronunciation(callback,group_id,token,send=None,play=None,quota=None):
+    send=send or telegram
+    play=play or send_voice
+    quota=quota or consume_quota
+    target=pronunciation_target(callback,group_id)
+    if not target: return "ignored"
+    cid=callback["id"]
+    if not quota("playback",((60,2),(86400,30))):
+        send(token,"answerCallbackQuery",{"callback_query_id":cid,"text":"Listening limit reached. Try again later.","show_alert":True})
+        return "limited"
+    send(token,"answerCallbackQuery",{"callback_query_id":cid,"text":"Preparing pronunciation…"})
+    try:
+        play(token,group_id,callback["message"]["message_id"],target)
+    except Exception:
+        voice_notice(token,group_id,callback["message"],"I couldn't generate the audio. Please try again.",send)
+        return "error"
+    return "played"
 
 def response(status):
     return {"statusCode":status,"body":""}
@@ -131,7 +174,7 @@ def handler(event, context):
                 current=telegram(token,"getWebhookInfo",{})
                 if current.get("url") and current["url"]!=url:
                     return {"status":"existing_webhook"}
-                telegram(token,"setWebhook",{"url":url,"secret_token":cfg["WEBHOOK_SECRET"],"allowed_updates":["message"],"max_connections":2})
+                telegram(token,"setWebhook",{"url":url,"secret_token":cfg["WEBHOOK_SECRET"],"allowed_updates":["message","callback_query"],"max_connections":2})
                 return {"status":"active","can_delete":member.get("can_delete_messages",False)}
             return {"status":"ignored"}
         headers={k.lower():v for k,v in (event.get("headers") or {}).items()}
@@ -149,10 +192,12 @@ def handler(event, context):
         group_id=int(cfg.get("GROUP_ID",0))
         if not group_id:
             return response(200)
+        callback=update.get("callback_query")
+        if callback is not None and not pronunciation_target(callback,group_id): return response(200)
         message=update.get("message",{})
         retry=retry_target(message,group_id)
         is_voice=voice_candidate(message,group_id) or retry is not None
-        if not is_voice and not eligible(message,group_id):
+        if callback is None and not is_voice and not eligible(message,group_id):
             return response(200)
         # Atomic deduplication of update IDs, no message content retained.
         import boto3
@@ -165,6 +210,9 @@ def handler(event, context):
             if exc.response["Error"]["Code"]=="ConditionalCheckFailedException":
                 return response(200)
             raise
+        if callback is not None:
+            handle_pronunciation(callback,group_id,token)
+            return response(200)
         if is_voice:
             if retry is not None: message=retry
             if not voice_eligible(message,group_id):
