@@ -1,0 +1,30 @@
+{"id":1,"input":"I goed to school yesterday","reference_correction":"I went to school yesterday.","reference_category":"english_error","split":"development"}
+{"id":2,"input":"Ai laik veri match inglish","reference_correction":"I like English very much.","reference_category":"phonetic","split":"development"}
+{"id":3,"input":"I want comprar a car","reference_correction":"I want to buy a car.","reference_category":"mixed","split":"development"}
+{"id":4,"input":"Eu gosto de estudar inglês.","reference_correction":"I like studying English.","reference_category":"portuguese_only","split":"development"}
+{"id":5,"input":"No","reference_correction":"","reference_category":"ambiguous","split":"development"}
+{"id":6,"input":"I ain't going","reference_correction":"","reference_category":"correct","split":"development"}
+{"id":7,"input":"I have 25 years","reference_correction":"I am 25 years old.","reference_category":"english_error","split":"development"}
+{"id":8,"input":"I need to by a computer","reference_correction":"I need to buy a computer.","reference_category":"english_error","split":"development"}
+{"id":9,"input":"Hello!","reference_correction":"","reference_category":"correct","split":"development"}
+{"id":10,"input":"I am with hunger","reference_correction":"I am hungry.","reference_category":"english_error","split":"development"}
+{"id":11,"input":"She doesn't likes coffee","reference_correction":"She doesn't like coffee.","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":12,"input":"I am agree with you","reference_correction":"I agree with you.","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":13,"input":"I have a question","reference_correction":"","reference_category":"correct","split":"candidate_evaluation"}
+{"id":14,"input":"I am interested on music","reference_correction":"I am interested in music.","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":15,"input":"He has been here since Monday","reference_correction":"","reference_category":"correct","split":"candidate_evaluation"}
+{"id":16,"input":"I have seen him yesterday","reference_correction":"I saw him yesterday.","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":17,"input":"Where you are going?","reference_correction":"Where are you going?","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":18,"input":"I bought two informations","reference_correction":"I received two pieces of information.","reference_category":"unclear","split":"candidate_evaluation"}
+{"id":19,"input":"Good night","reference_correction":"","reference_category":"correct","split":"candidate_evaluation"}
+{"id":20,"input":"Bom dia a todos","reference_correction":"Good morning, everyone.","reference_category":"portuguese_only","split":"candidate_evaluation"}
+{"id":21,"input":"I need ajuda with my homework","reference_correction":"I need help with my homework.","reference_category":"mixed","split":"candidate_evaluation"}
+{"id":22,"input":"Me","reference_correction":"","reference_category":"ambiguous","split":"candidate_evaluation"}
+{"id":23,"input":"I like the colour blue","reference_correction":"","reference_category":"correct","split":"candidate_evaluation"}
+{"id":24,"input":"I like the color blue","reference_correction":"","reference_category":"correct","split":"candidate_evaluation"}
+{"id":25,"input":"I depend of my parents","reference_correction":"I depend on my parents.","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":26,"input":"I pretend to visit London","reference_correction":"","reference_category":"unclear","split":"candidate_evaluation"}
+{"id":27,"input":"I am studying English since 2020","reference_correction":"I have been studying English since 2020.","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":28,"input":"I look forward to see you","reference_correction":"I look forward to seeing you.","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":29,"input":"Can you explain me this?","reference_correction":"Can you explain this to me?","reference_category":"english_error","split":"candidate_evaluation"}
+{"id":30,"input":"Could you help me?","reference_correction":"","reference_category":"correct","split":"candidate_evaluation"}
