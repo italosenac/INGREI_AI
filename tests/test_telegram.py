@@ -24,9 +24,9 @@ class TelegramTests(unittest.TestCase):
             return '{"category":"portuguese_only","correction":"Good morning","explanation":""}'
         self.assertEqual(handle_update(self.update,-123,"fake",infer,self.send),"warn")
         self.assertEqual([call[0] for call in self.calls],["sendMessage"])
-    def test_correct_english_silent(self):
-        self.assertEqual(handle_update(self.update,-123,"fake",lambda t:'{"category":"correct"}',self.send),"allowed")
-        self.assertEqual(self.calls,[])
+    def test_correct_english_replies(self):
+        self.assertEqual(handle_update(self.update,-123,"fake",lambda t:'{"category":"correct","conversational_reply":"Thank you!"}',self.send),"allow")
+        self.assertEqual(self.calls[0][1]["text"],"Thank you!")
     def test_command_ignored(self):
         self.update["message"]["text"]="/unknown"
         self.assertEqual(handle_update(self.update,-123,"fake",self.infer,self.send),"ignored")
@@ -44,3 +44,13 @@ class TelegramTests(unittest.TestCase):
         self.update["message"]["text"]="/help@otherbot"
         self.assertEqual(handle_update(self.update,-123,"fake",self.infer,self.send),"ignored")
         self.assertEqual(self.calls,[])
+
+    def test_insult_question_replies(self):
+        self.update["message"]["text"]="You're an idiot, what do you think about that?"
+        raw='{"category":"correct","conversational_reply":"That is an insult. What would you like to discuss?"}'
+        handle_update(self.update,-123,"fake",lambda t:raw,self.send)
+        self.assertIn("insult",self.calls[0][1]["text"])
+    def test_inference_failure_replies(self):
+        def fail(text): raise RuntimeError("unavailable")
+        handle_update(self.update,-123,"fake",fail,self.send)
+        self.assertIn("tell me more",self.calls[0][1]["text"])
