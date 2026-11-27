@@ -26,6 +26,9 @@ def config():
     secret=boto3.client("secretsmanager").get_secret_value(SecretId=os.environ["SECRET_ARN"])
     return json.loads(secret["SecretString"])
 
+def is_long_text(text):
+    return len(text)>450 or len([p for p in text.splitlines() if p.strip()])>=3
+
 def handle_passage(message,group_id,token,send,review=None):
     review=review or review_passage
     parts=passage_parts(message["text"])
@@ -37,8 +40,10 @@ def handle_passage(message,group_id,token,send,review=None):
         except Exception as exc:
             print("passage_review_failed:"+type(exc).__name__)
             return None
-    for batch in batches:
-        data=evaluate(batch)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_pass=list(pool.map(evaluate,batches))
+    for batch,data in zip(batches,first_pass):
         if data is None and len(batch)>1:
             mid=len(batch)//2
             groups=[(batch[:mid],evaluate(batch[:mid])),(batch[mid:],evaluate(batch[mid:]))]
@@ -74,10 +79,14 @@ def handle_passage(message,group_id,token,send,review=None):
         body=header+"\n\n"+corrected
         if notes: body+="\n\nWhy:\n"+"\n".join(notes)
         if topics: body+="\n\nLearn more:\n"+"\n".join(CATALOG[t][0]+": "+CATALOG[t][1] for t in topics)
-        for chunk in message_chunks(body): post(chunk)
-        for target in passage_parts(corrected,480):
-            target=" ".join(target.split())
-            if target: post("Listening practice — "+label,target)
+        targets=[" ".join(t.split()) for t in passage_parts(corrected,480) if t.strip()]
+        chunks=list(message_chunks(body))
+        for j,chunk in enumerate(chunks):
+            if j==len(chunks)-1 and len(targets)==1 and len(chunk)+len(targets[0])<3800:
+                post(chunk,targets[0])
+                targets=[]
+            else: post(chunk)
+        for target in targets: post("Listening practice — "+label,target)
     return "passage" if all(row is not None for _,row in results) else "partial_passage"
 
 def handle_update(update, group_id, token, infer=analyze, send=telegram, review=None):
@@ -94,7 +103,7 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram, review=
             send(token,"sendMessage",{"chat_id":group_id,"text":reply,"reply_parameters":{"message_id":message["message_id"]},"link_preview_options":{"is_disabled":True}})
             return "command"
         return "ignored"
-    if len(text)>450 or len([p for p in text.splitlines() if p.strip()])>=3:
+    if is_long_text(text):
         return handle_passage(message,group_id,token,send,review)
     try:
         raw=infer(text)
@@ -191,6 +200,18 @@ def handler(event, context):
                 sent=telegram(token,"sendMessage",{"chat_id":group_id,"text":"TechVerse Tutor — deployment test.\n"+sample+"\nListen and repeat!","link_preview_options":{"is_disabled":True}})
                 voice_id=send_voice(token,group_id,sent["message_id"],sample)
                 return {"status":"delivered","text_message_id":sent["message_id"],"voice_message_id":voice_id}
+            if event.get("operation") == "passage_worker":
+                if expired(): return {"status":"expired"}
+                group_id=int(cfg.get("GROUP_ID",0))
+                message=event.get("message",{})
+                if not eligible(message,group_id) or not is_long_text(message["text"]): return {"status":"ignored"}
+                try:
+                    return {"status":handle_passage(message,group_id,token,telegram)}
+                except Exception as exc:
+                    print("passage_worker_failed:"+type(exc).__name__)
+                    try: voice_notice(token,group_id,message,"I could not finish reviewing your text. Please try again in smaller sections.")
+                    except Exception: pass
+                    return {"status":"error"}
             if event.get("operation") == "voice_worker":
                 if expired(): return {"status":"expired"}
                 group_id=int(cfg.get("GROUP_ID",0))
@@ -301,7 +322,20 @@ def handler(event, context):
                     spoken=arg.strip()[:500]
                     if spoken: send_voice(token,group_id,message['message_id'],spoken)
             else:
-                if text.startswith('/') or consume_quota():
+                if not text.startswith('/') and is_long_text(text):
+                    if not consume_quota("passage",((60,2),(86400,20))):
+                        if consume_quota("notice",((60,5),(86400,60))):
+                            voice_notice(token,group_id,message,"Long-text review limit reached. Please try again later.")
+                        return response(200)
+                    minimal={"chat":{"id":group_id,"type":message["chat"]["type"]},"from":{"is_bot":False},"message_id":message["message_id"],"text":text}
+                    try:
+                        queued=boto3.client("lambda").invoke(FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],InvocationType="Event",Payload=json.dumps({"operation":"passage_worker","message":minimal}).encode())
+                        if queued.get("StatusCode")!=202: raise RuntimeError("queue rejected")
+                        voice_notice(token,group_id,message,"📝 I received your text. I'll review every section and answer your questions.")
+                    except Exception as exc:
+                        print("passage_enqueue_failed:"+type(exc).__name__)
+                        voice_notice(token,group_id,message,"I couldn't start reviewing your text. Please try again.")
+                elif text.startswith('/') or consume_quota():
                     handle_update(update,group_id,token)
                 elif consume_quota('notice',((60,5),(86400,60))):
                     voice_notice(token,group_id,message,'Text practice limit reached. Please try again later.')
