@@ -80,7 +80,7 @@ def lesson(raw, decision):
     title,url=CATALOG[topic]
     result="Suggested correction: "+safe_text(decision.correction,1200)
     if decision.action=="warn":
-        result="English only, please. Try: "+safe_text(decision.correction,1200)
+        result="English only, please.\n\nNatural English: "+safe_text(decision.correction,1200)
     why=safe_text(decision.explanation,500)
     if why: result+="\n\nWhy: "+why
     example=safe_text(data.get("example"),200)
