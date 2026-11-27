@@ -1,0 +1,122 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Private on-demand Whisper speech recognition. No public endpoint, no secrets, no stored learner data.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    }
+  },
+  "Parameters": {
+    "ImageUri": {
+      "Type": "String",
+      "Description": "ECR image URI pinned by sha256 digest",
+      "AllowedPattern": ".+@sha256:[0-9a-f]{64}"
+    }
+  },
+  "Resources": {
+    "WorkerLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Retain runtime operational diagnostics",
+          "must": "No audio or transcript in logs"
+        }
+      },
+      "Properties": {
+        "LogGroupName": "/aws/lambda/techverse-english-whisper",
+        "RetentionInDays": 7
+      }
+    },
+    "WorkerRole": {
+      "Type": "AWS::IAM::Role",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Run a standalone offline inference worker",
+          "must": "No access to Telegram token, S3, DynamoDB or Bedrock"
+        }
+      },
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "RuntimeLogsOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/techverse-english-whisper:*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Worker": {
+      "Type": "AWS::Lambda::Function",
+      "DependsOn": [
+        "WorkerLogs"
+      ],
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Multilingual CPU INT8 recognition with prepackaged weights",
+          "must": "Private IAM invocation only; no provisioned concurrency; max 30s audio"
+        }
+      },
+      "Properties": {
+        "FunctionName": "techverse-english-whisper",
+        "PackageType": "Image",
+        "Architectures": [
+          "x86_64"
+        ],
+        "Code": {
+          "ImageUri": {
+            "Ref": "ImageUri"
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "WorkerRole",
+            "Arn"
+          ]
+        },
+        "MemorySize": 2048,
+        "Timeout": 65,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "INGREI_AI"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "WorkerArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Worker",
+          "Arn"
+        ]
+      }
+    }
+  }
+}
