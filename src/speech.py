@@ -14,12 +14,25 @@ def voice_allowed(voice):
             and type(voice.get("duration")) is int and 1<=voice["duration"]<=30
             and type(voice.get("file_size",0)) is int and 0<=voice.get("file_size",0)<=2000000)
 
+def synthesize_bytes(text, client=None):
+    import base64
+    if not isinstance(text,str) or not text.strip(): raise ValueError("empty speech text")
+    if client is None:
+        import boto3
+        from botocore.config import Config
+        client=boto3.client("lambda",config=Config(connect_timeout=3,read_timeout=75,retries={"total_max_attempts":1}))
+    result=client.invoke(FunctionName=os.environ["WHISPER_FUNCTION"],InvocationType="RequestResponse",
+        Payload=json.dumps({"operation":"synthesize","text":text.strip()[:500]}).encode())
+    with result["Payload"] as stream:
+        data=json.load(stream)
+    if result.get("FunctionError") or data.get("status")!="complete" or data.get("format")!="mp3":
+        raise RuntimeError("local speech synthesis failed")
+    audio=base64.b64decode(data["audio"],validate=True)
+    if not 100<len(audio)<=2000000: raise ValueError("invalid synthesized audio")
+    return audio
+
 def send_voice(token, group_id, message_id, text):
-    import boto3
-    result=boto3.client("polly").synthesize_speech(Engine="neural",VoiceId="Joanna",
-        LanguageCode="en-US",OutputFormat="mp3",Text=text[:1000])
-    with result["AudioStream"] as stream:
-        audio=stream.read(2000000)
+    audio=synthesize_bytes(text)
     boundary=uuid.uuid4().hex
     chunks=[]
     for name,value in {"chat_id":str(group_id),"reply_parameters":json.dumps({"message_id":message_id}),"caption":"Listen and repeat (US English)"}.items():
