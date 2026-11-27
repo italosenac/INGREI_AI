@@ -180,3 +180,29 @@ class TelegramTests(unittest.TestCase):
     def test_correct_english_with_international_words(self):
         for sample in ["I went to Paris once.","I like pizza and pasta.","My friend is called Maria.","I love you very much."]:
             self.assertFalse(foreign_evidence(sample))
+
+    def test_natural_vocatives_no_paid_inference(self):
+        class NoModel:
+            def converse(self,**kw): raise AssertionError("known expression must be local")
+        for source,expected in [("Bom dia, seu bot desgraçado","Good morning, you damn bot!"),("Boa tarde, seu idiota!","Good afternoon, you idiot!")]:
+            result=json.loads(analyze(source,NoModel()))
+            self.assertEqual(result["correction"],expected)
+            self.assertEqual(result["category"],"portuguese_only")
+        self.assertEqual(json.loads(analyze("Good morning, you damn bot!",NoModel()))["category"],"correct")
+    def test_natural_idioms_local(self):
+        class NoModel:
+            def converse(self,**kw): raise AssertionError("known idiom must be local")
+        for source,expected in [("Estou com saudade de você.","I miss you."),("Estou morrendo de fome.","I'm starving."),("Estou de saco cheio.","I'm fed up."),("Pode deixar comigo.","Leave it to me.")]:
+            self.assertEqual(json.loads(analyze(source,NoModel()))["correction"],expected)
+    def test_natural_translation_matches_pronunciation(self):
+        self.update["message"]["text"]="Bom dia, seu bot desgraçado"
+        self.assertEqual(handle_update(self.update,-123,"fake",analyze,self.send),"warn")
+        reply=self.calls[0][1]["text"]
+        self.assertIn("Natural English: Good morning, you damn bot!",reply)
+        self.assertIn("Pronunciation: Good morning, you damn bot!",reply)
+        self.assertNotIn("your bot",reply)
+    def test_possessive_not_rewritten_by_local_rule(self):
+        class Client:
+            def converse(self,**kw):
+                return {"stopReason":"end_turn","output":{"message":{"content":[{"text":json.dumps({"category":"foreign_only","source_language":"pt","correction":"Where is your dog?","explanation":"Seu means your here."})}]}}}
+        self.assertEqual(json.loads(analyze("Onde está seu cachorro?",Client()))["correction"],"Where is your dog?")
