@@ -57,6 +57,15 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram):
         "link_preview_options":{"is_disabled":True}})
     return decision.action
 
+def voice_notice(token,group_id,message,text,send=telegram):
+    return send(token,"sendMessage",{"chat_id":group_id,"text":text,"reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},"link_preview_options":{"is_disabled":True}})
+
+def voice_candidate(message,group_id):
+    if not isinstance(message,dict): return False
+    chat=message.get("chat",{})
+    sender=message.get("from",{})
+    return bool(group_id and chat.get("id")==group_id and chat.get("type") in ("group","supergroup") and sender and not sender.get("is_bot",False) and isinstance(message.get("voice"),dict))
+
 def response(status):
     return {"statusCode":status,"body":""}
 
@@ -79,10 +88,13 @@ def handler(event, context):
                 message=event.get("message",{})
                 if not voice_eligible(message,group_id): return {"status":"ignored"}
                 try:
-                    return {"status":process_voice(token,group_id,message,telegram)}
-                except Exception:
-                    try: telegram(token,"sendMessage",{"chat_id":group_id,"text":"I could not process this recording. Please try again later.","reply_parameters":{"message_id":message["message_id"]}})
-                    except Exception: pass
+                    outcome=process_voice(token,group_id,message,telegram)
+                    print("voice_worker_"+outcome)
+                    return {"status":outcome}
+                except Exception as exc:
+                    print("voice_worker_failed:"+type(exc).__name__)
+                    try: voice_notice(token,group_id,message,"I could not process this recording. Please try again later.")
+                    except Exception: print("voice_error_notice_failed")
                     return {"status":"voice_error"}
             if event.get("operation") == "discover":
                 info=telegram(token,"getWebhookInfo",{})
@@ -128,7 +140,7 @@ def handler(event, context):
         if not group_id:
             return response(200)
         message=update.get("message",{})
-        is_voice=voice_eligible(message,group_id)
+        is_voice=voice_candidate(message,group_id)
         if not is_voice and not eligible(message,group_id):
             return response(200)
         # Atomic deduplication of update IDs, no message content retained.
@@ -142,16 +154,28 @@ def handler(event, context):
             if exc.response["Error"]["Code"]=="ConditionalCheckFailedException":
                 return response(200)
             raise
-        if not consume_quota():
-            return response(200)
         if is_voice:
+            if not voice_eligible(message,group_id):
+                if consume_quota("notice",((60,5),(86400,60))):
+                    voice_notice(token,group_id,message,"Please send a voice note up to 30 seconds and 2 MB.")
+                return response(200)
             if os.environ.get("VOICE_INPUT_ENABLED","false").lower()!="true":
                 telegram(token,"sendMessage",{"chat_id":group_id,"text":"Voice recognition is temporarily unavailable. You can still practice listening with /listen followed by an English sentence.","reply_parameters":{"message_id":message["message_id"]}})
                 return response(200)
-            if not consume_quota("voice",((60,2),(86400,30))):
+            if not consume_quota("voice",((60,5),(86400,30))):
+                if consume_quota("notice",((60,5),(86400,60))):
+                    voice_notice(token,group_id,message,"Voice practice limit reached. Please try again in a minute or tomorrow if the daily limit is reached.")
                 return response(200)
             minimal={"chat":{"id":group_id,"type":message["chat"]["type"]},"from":{"is_bot":False},"message_id":message["message_id"],"voice":{k:message["voice"][k] for k in ("file_id","duration","file_size") if k in message["voice"]}}
-            boto3.client("lambda").invoke(FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],InvocationType="Event",Payload=json.dumps({"operation":"voice_worker","message":minimal}).encode())
+            try:
+                queued=boto3.client("lambda").invoke(FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],InvocationType="Event",Payload=json.dumps({"operation":"voice_worker","message":minimal}).encode())
+                if queued.get("StatusCode")!=202: raise RuntimeError("queue rejected")
+            except Exception:
+                print("voice_enqueue_failed")
+                voice_notice(token,group_id,message,"I could not start processing your audio. Please try again.")
+                return response(200)
+            print("voice_queued")
+            voice_notice(token,group_id,message,"🎧 I received your voice note. I am listening for your intended English sentence.")
         else:
             text=message['text'].strip()
             cmd, _, arg=text.partition(' ')
@@ -161,9 +185,11 @@ def handler(event, context):
                     spoken=arg.strip()[:500]
                     if spoken: send_voice(token,group_id,message['message_id'],spoken)
             else:
-                handle_update(update,group_id,token)
+                if text.startswith('/') or consume_quota():
+                    handle_update(update,group_id,token)
         return response(200)
-    except Exception:
+    except Exception as exc:
+        print("handler_failed:"+type(exc).__name__)
         # Never expose raw payload, token, or provider exception.
         return response(200) if "requestContext" in event else {"status":"error"}
 
