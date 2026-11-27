@@ -26,7 +26,20 @@ def normalize(raw):
         return raw[4:-3].strip()
     return raw
 
-def analyze(text, client=None):
+VOICE_GUIDANCE = """
+Input is an imperfect automatic transcript of a beginner speaking English, not a verbatim recording.
+The recognizer may confuse Brazilian Portuguese sounds with English words, omit words, or normalize grammar.
+Preserve clear fragments. Infer plausible intended English only when supported.
+For ambiguous or incomplete utterances, use category unclear, empty correction/explanation, and optionally
+a short possible_meaning and alternate_meaning (strings), phrased as suggestions, not claims.
+Example: 'Hi, que o, very much, my friend' could be 'Thank you very much, my friend' or 'I like you very much, my friend'.
+Ask the learner which meaning they intended. Never assert that you measured pronunciation or heard a specific phoneme.
+Do not classify a fragment containing English as Portuguese-only. Never invent context, names or details.
+"""
+def analyze_voice(text, client=None):
+    return analyze(text,client,voice=True)
+
+def analyze(text, client=None, voice=False):
     if client is None:
         import boto3
         from botocore.config import Config
@@ -35,7 +48,7 @@ def analyze(text, client=None):
             retries={"mode":"adaptive","total_max_attempts":2}))
     response = client.converse(
         modelId=os.environ.get("MODEL_ID","amazon.nova-lite-v1:0"),
-        system=[{"text":SYSTEM + GUIDANCE + '\nFor corrections add strings topic, example, practice. topic must be one of: '+TOPICS+'. Example: one short illustrative sentence. Practice: one short fill-in-the-blank prompt. Explain at A1-A2 level in plain English. Never provide URLs or instructions to visit external sites.'}],
+        system=[{"text":SYSTEM + GUIDANCE + (VOICE_GUIDANCE if voice else '') + '\nFor corrections add strings topic, example, practice. topic must be one of: '+TOPICS+'. Example: one short illustrative sentence. Practice: one short fill-in-the-blank prompt. Explain at A1-A2 level in plain English. Never provide URLs or instructions to visit external sites.'}],
         messages=[{"role":"user","content":[{"text":json.dumps(
             {"learner_message":text},ensure_ascii=False)}]}],
         inferenceConfig={"maxTokens":450,"temperature":0})
