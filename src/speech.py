@@ -3,7 +3,6 @@ import datetime
 import json
 import os
 import re
-import time
 import urllib.request
 import uuid
 from .knowledge import lesson, safe_text, CATALOG
@@ -32,43 +31,26 @@ def send_voice(token, group_id, message_id, text):
     with urllib.request.urlopen(req,timeout=10) as response:
         if not json.load(response).get("ok"): raise RuntimeError("voice send failed")
 
-def transcribe_bytes(audio):
-    import boto3
-    bucket=os.environ["AUDIO_BUCKET"]
-    job="techverse-english-"+uuid.uuid4().hex
-    source="input/"+job+".ogg"
-    output="output/"+job+".json"
-    s3=boto3.client("s3")
-    transcribe=boto3.client("transcribe")
-    started=False
-    try:
-        s3.put_object(Bucket=bucket,Key=source,Body=audio,ContentType="audio/ogg")
-        transcribe.start_transcription_job(TranscriptionJobName=job,MediaFormat="ogg",
-            Media={"MediaFileUri":"s3://"+bucket+"/"+source},
-            IdentifyMultipleLanguages=True,LanguageOptions=["en-US","en-GB","pt-BR"],
-            OutputBucketName=bucket,OutputKey=output)
-        started=True
-        deadline=time.monotonic()+105
-        while time.monotonic()<deadline:
-            state=transcribe.get_transcription_job(TranscriptionJobName=job)["TranscriptionJob"]["TranscriptionJobStatus"]
-            if state=="FAILED": raise RuntimeError("transcription failed")
-            if state=="COMPLETED":
-                obj=s3.get_object(Bucket=bucket,Key=output)
-                with obj["Body"] as body: data=json.load(body)
-                results=data["results"]
-                text=" ".join(x["transcript"] for x in results.get("transcripts",[])).strip()
-                scores=[float(i["alternatives"][0]["confidence"]) for i in results.get("items",[])
-                        if i.get("type")=="pronunciation" and i.get("alternatives") and "confidence" in i["alternatives"][0]]
-                return text, (sum(scores)/len(scores) if scores else None)
-            time.sleep(3)
-        raise TimeoutError("transcription timed out")
-    finally:
-        if started:
-            try: transcribe.delete_transcription_job(TranscriptionJobName=job)
-            except Exception: pass
-        for key in (source,output):
-            try: s3.delete_object(Bucket=bucket,Key=key)
-            except Exception: pass
+def transcribe_bytes(audio, client=None):
+    """Invoke the private Whisper worker; no S3 or external transcription API."""
+    import base64
+    if not isinstance(audio,bytes) or not 0<len(audio)<=2000000:
+        raise ValueError("invalid audio size")
+    if client is None:
+        import boto3
+        from botocore.config import Config
+        client=boto3.client("lambda",config=Config(connect_timeout=3,read_timeout=75,retries={"total_max_attempts":1}))
+    result=client.invoke(FunctionName=os.environ["WHISPER_FUNCTION"],InvocationType="RequestResponse",
+        Payload=json.dumps({"audio":base64.b64encode(audio).decode("ascii")}).encode())
+    with result["Payload"] as stream:
+        data=json.load(stream)
+    if result.get("FunctionError") or not isinstance(data,dict):
+        raise RuntimeError("speech worker failed")
+    if data.get("status") in ("uncertain","invalid_duration"):
+        return "",None
+    if data.get("status")!="complete" or not isinstance(data.get("text"),str):
+        raise RuntimeError("speech worker rejected recording")
+    return data["text"].strip()[:2000],None
 
 def voice_feedback(text, confidence, infer=analyze):
     if not text or confidence is not None and confidence<0.65:
