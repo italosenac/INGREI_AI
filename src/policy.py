@@ -44,4 +44,4 @@ def eligible(message: dict, group_id: int) -> bool:
     text = message.get("text")
     return (chat.get("id") == group_id and chat.get("type") in ("group", "supergroup")
             and bool(sender) and not sender.get("is_bot", False)
-            and isinstance(text, str) and 0 < len(text.strip()) <= 2000)
+            and isinstance(text, str) and 0 < len(text.strip()) <= 4096)
