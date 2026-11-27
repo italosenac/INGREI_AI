@@ -65,7 +65,7 @@ class TelegramTests(unittest.TestCase):
         self.update["message"]["text"]="You're an amazing person."
         handle_update(self.update,-123,"fake",lambda t:'{"category":"correct","conversational_reply":"Thanks!"}',self.send)
         payload=self.calls[0][1]
-        cb={"id":"cb1","data":"pronounce:v1","from":{"id":7},"message":{"chat":{"id":-123,"type":"supergroup"},"from":{"is_bot":True,"username":"techverseEnglishBot"},"message_id":8,"text":payload["text"]}}
+        cb={"id":"cb1","data":"pronounce:v2","from":{"id":7},"message":{"chat":{"id":-123,"type":"supergroup"},"from":{"is_bot":True,"username":"techverseEnglishBot"},"message_id":8,"text":payload["text"]}}
         self.assertEqual(pronunciation_target(cb,-123),"You're an amazing person.")
         played=[]
         self.assertEqual(handle_pronunciation(cb,-123,"fake",self.send,lambda *a:played.append(a),lambda *a:True),"played")
