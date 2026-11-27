@@ -48,18 +48,24 @@ def transcribe_bytes(audio, client=None):
         data=json.load(stream)
     if result.get("FunctionError") or not isinstance(data,dict):
         raise RuntimeError("speech worker failed")
-    if data.get("status") in ("uncertain","invalid_duration"):
+    if data.get("status")=="invalid_duration":
         return "",None
+    if data.get("status")=="uncertain":
+        primary=data.get("text","")
+        alternate=data.get("alternate","")
+        candidates=list(dict.fromkeys(x.strip()[:900] for x in (primary,alternate) if isinstance(x,str) and x.strip()))
+        return " | ".join(candidates),0.4 if candidates else None
     if data.get("status")!="complete" or not isinstance(data.get("text"),str):
         raise RuntimeError("speech worker rejected recording")
     return data["text"].strip()[:2000],None
 
 def voice_feedback(text, confidence, infer=analyze_voice):
-    if not text or confidence is not None and confidence<0.65:
+    if not text:
         return "I heard your recording, but I couldn't recognize the words reliably. Try again slowly, one short phrase at a time. You can also type what you meant.\n\nSpeaking practice: "+CATALOG["pronunciation"][1], ""
-    raw=infer(text[:2000])
+    tentative=confidence is not None and confidence<0.65
+    raw=infer(("Uncertain speech hypotheses (not confirmed): "+text if tentative else text)[:2000])
     d=decide(raw)
-    prefix="What I understood: "+safe_text(text,1000)+"\n\n"
+    prefix=("Possible words I recognized: " if tentative else "What I understood: ")+safe_text(text,1000)+"\n\n"
     if d.action=="clarify":
         try:
             data=json.loads(raw)
@@ -68,13 +74,17 @@ def voice_feedback(text, confidence, infer=analyze_voice):
             possibilities=[]
         suggestions=list(dict.fromkeys(p for p in possibilities if p))
         hint="Possible meanings (not confirmed):\n"+"\n".join("- "+p for p in suggestions)+"\n\n" if suggestions else ""
-        return prefix+hint+"Which meaning did you intend? Please repeat slowly or type your intended sentence.\n\nSpeaking practice: "+CATALOG["pronunciation"][1], ""
+        return prefix+hint+"Which meaning did you intend? Please repeat slowly or type your intended sentence.\n\nSpeaking practice: "+CATALOG["pronunciation"][1], suggestions[0] if len(suggestions)==1 else ""
     if d.action in ("correct","warn"):
+        if tentative:
+            return prefix+"My best guess (please confirm): "+safe_text(d.correction,1000)+"\n\n"+lesson(raw,d)+"\n\nDoes this match what you meant? Listen and repeat if so.",safe_text(d.correction,1000)
         return prefix+lesson(raw,d)+"\n\nListen and repeat. Transcription is not a pronunciation score.",safe_text(d.correction,1000)
     if d.action=="allow":
         # An invalid response is not evidence that the sentence is correct.
         try: category=json.loads(raw).get("category")
         except (ValueError,AttributeError): category=None
+        if category=="correct" and tentative:
+            return prefix+"My best guess: "+safe_text(text.split(" | ")[0],900)+"\nIs that what you meant? Please confirm.\n\nSpeaking practice: "+CATALOG["pronunciation"][1],""
         if category=="correct":
             return prefix+"Your transcribed sentence looks correct. Listen and repeat.\n\nListening practice: "+CATALOG["listening"][1]+"\n\nTranscription is not a pronunciation score.",safe_text(text,1000)
     return prefix+"I couldn't assess the sentence reliably. Please try another recording or type what you meant.\n\nSpeaking practice: "+CATALOG["pronunciation"][1], ""
