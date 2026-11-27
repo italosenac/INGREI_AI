@@ -6,7 +6,7 @@ import json
 import os
 import urllib.request
 from .policy import decide, eligible
-from .inference import analyze, review_passage
+from .inference import analyze, review_passage, guard_language, foreign_evidence
 from .knowledge import lesson, command_reply, conversation, safe_text, passage_parts, passage_batches, passage_notes, message_chunks, CATALOG
 from .speech import process_voice, voice_allowed, send_voice
 
@@ -60,9 +60,9 @@ def handle_passage(message,group_id,token,send,review=None):
         payload={"chat_id":group_id,"text":text,
             "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
             "link_preview_options":{"is_disabled":True}}
-        if target and len(target)<=500:
+        if target and len(target)<=500 and not foreign_evidence(target):
             payload["text"]+="\n\n🔊 Pronunciation: "+target+"\nWould you like to hear the pronunciation?"
-            payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v1"}]]}
+            payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v2"}]]}
         send(token,"sendMessage",payload)
     if replies:
         for part in message_chunks("\n\n".join(dict.fromkeys(replies))): post(part)
@@ -106,7 +106,7 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram, review=
     if is_long_text(text):
         return handle_passage(message,group_id,token,send,review)
     try:
-        raw=infer(text)
+        raw=guard_language(text,infer(text))
     except Exception as exc:
         print("text_inference_failed:"+type(exc).__name__)
         raw="{}"
@@ -130,7 +130,7 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram, review=
         "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
         "link_preview_options":{"is_disabled":True}}
     target=" ".join(safe_text(spoken,2000).split())
-    if target and len(target)<=500:
+    if target and len(target)<=500 and not foreign_evidence(target):
         payload["text"]+="\n\n🔊 Pronunciation: "+target+"\nWould you like to hear the pronunciation?"
         payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v1"}]]}
     send(token,"sendMessage",payload)
@@ -153,7 +153,7 @@ def retry_target(message,group_id):
     return original if voice_candidate(original,group_id) else None
 
 def pronunciation_target(callback,group_id):
-    if not isinstance(callback,dict) or callback.get("data")!="pronounce:v1": return ""
+    if not isinstance(callback,dict) or callback.get("data") not in ("pronounce:v1","pronounce:v2"): return ""
     actor=callback.get("from",{})
     message=callback.get("message",{})
     chat=message.get("chat",{})
@@ -173,6 +173,9 @@ def handle_pronunciation(callback,group_id,token,send=None,play=None,quota=None)
     target=pronunciation_target(callback,group_id)
     if not target: return "ignored"
     cid=callback["id"]
+    if foreign_evidence(target):
+        send(token,"answerCallbackQuery",{"callback_query_id":cid,"text":"This is not English. Please resend the text for translation.","show_alert":True})
+        return "foreign"
     if not quota("playback",((60,2),(86400,30))):
         send(token,"answerCallbackQuery",{"callback_query_id":cid,"text":"Listening limit reached. Try again later.","show_alert":True})
         return "limited"
@@ -320,7 +323,16 @@ def handler(event, context):
             if name=='/listen' and (not sep or target=='techverseenglishbot'):
                 if consume_quota('playback',((60,2),(86400,30))):
                     spoken=arg.strip()[:500]
-                    if spoken: send_voice(token,group_id,message['message_id'],spoken)
+                    if spoken:
+                        raw=analyze(spoken)
+                        decision=decide(raw)
+                        try: category=json.loads(raw).get("category")
+                        except (ValueError,AttributeError,TypeError): category=None
+                        target_text=decision.correction if decision.action in ("correct","warn") else spoken if category=="correct" else ""
+                        if target_text and not foreign_evidence(target_text):
+                            if target_text!=spoken: voice_notice(token,group_id,message,"English version: "+target_text)
+                            send_voice(token,group_id,message["message_id"],target_text)
+                        else: voice_notice(token,group_id,message,"I could not verify an English version. Please try again.")
             else:
                 if not text.startswith('/') and is_long_text(text):
                     if not consume_quota("passage",((60,2),(86400,20))):
