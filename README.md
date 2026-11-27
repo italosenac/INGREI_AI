@@ -30,3 +30,6 @@ The Piper engine is GPL-licensed; model card and licensing information are packa
 
 ## Conversation mode
 The tutor replies naturally in English to eligible text and voice, even when the grammar is correct. Ordinary profanity alone is not a grammar error; the tutor answers without retaliating. Genuine errors still receive a correction and learning resources. Unknown or ambiguous speech receives clarification. Group isolation, rate limits, platform safeguards and no-logging rules remain in force. `/retry` is for a previous voice note, not a text message.
+
+### Opt-in pronunciation for written messages
+Correct English receives a positive confirmation alongside the conversational reply. Actual corrections retain the conversation and teaching feedback. Eligible sentences up to 500 characters include a `Yes, listen` Telegram button that plays the original correct sentence or the corrected sentence using Piper. Audio is generated only on request; the existing playback quota (2/minute, 30/day) applies. Incoming voice-note handling remains unchanged. Uncertain or invalid analysis does not receive false praise or a pronunciation offer. The callback is restricted to the authorized group and this bot's own message; no new storage of learner text is introduced.
