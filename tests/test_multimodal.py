@@ -2,7 +2,10 @@ import json
 import unittest
 from src.knowledge import lesson, CATALOG
 from src.policy import decide
-from src.speech import voice_allowed, voice_feedback
+from src.speech import voice_allowed, voice_feedback, transcribe_bytes
+from unittest.mock import patch
+import io
+import os
 from src.telegram_runtime import voice_eligible, handle_update
 
 class MultimodalTests(unittest.TestCase):
@@ -45,3 +48,35 @@ class MultimodalTests(unittest.TestCase):
         reply,spoken=voice_feedback("I like English",0.9,lambda t:'{"category":"correct"}')
         self.assertEqual(spoken,"I like English")
         self.assertIn("transcribed sentence looks correct",reply)
+
+    def test_whisper_invocation(self):
+        class Client:
+            def invoke(self, **kwargs):
+                self.kwargs=kwargs
+                return {"Payload":io.BytesIO(b'{"status":"complete","text":"I like English."}')}
+        client=Client()
+        with patch.dict(os.environ,{"WHISPER_FUNCTION":"test-worker"}):
+            self.assertEqual(transcribe_bytes(b"OggS",client),("I like English.",None))
+        self.assertEqual(client.kwargs["FunctionName"],"test-worker")
+        self.assertEqual(json.loads(client.kwargs["Payload"])["audio"],"T2dnUw==")
+    def test_whisper_uncertainty(self):
+        class Client:
+            def invoke(self, **kwargs):
+                return {"Payload":io.BytesIO(b'{"status":"uncertain","text":""}')}
+        with patch.dict(os.environ,{"WHISPER_FUNCTION":"test-worker"}):
+            self.assertEqual(transcribe_bytes(b"OggS",Client()),("",None))
+    def test_whisper_failure(self):
+        class Client:
+            def invoke(self, **kwargs):
+                return {"FunctionError":"Unhandled","Payload":io.BytesIO(b'{}')}
+        with patch.dict(os.environ,{"WHISPER_FUNCTION":"test-worker"}):
+            with self.assertRaises(RuntimeError):
+                transcribe_bytes(b"OggS",Client())
+    def test_whisper_size(self):
+        with self.assertRaises(ValueError):
+            transcribe_bytes(b"")
+    def test_bare_link_removed(self):
+        raw=json.dumps({"category":"english_error","correction":"I like English.","explanation":"Visit evil.example or ftp://bad.example/file","topic":"past"})
+        result=lesson(raw,decide(raw))
+        self.assertNotIn("evil.example",result)
+        self.assertNotIn("bad.example",result)
