@@ -7,7 +7,7 @@ import os
 import urllib.request
 from .policy import decide, eligible
 from .inference import analyze
-from .knowledge import lesson, command_reply
+from .knowledge import lesson, command_reply, conversation
 from .speech import process_voice, voice_allowed, send_voice
 
 def telegram(token, method, payload):
@@ -40,20 +40,23 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram):
             send(token,"sendMessage",{"chat_id":group_id,"text":reply,"reply_parameters":{"message_id":message["message_id"]},"link_preview_options":{"is_disabled":True}})
             return "command"
         return "ignored"
-    if not any(c.isalpha() for c in text):
-        return "ignored"
-    raw=infer(text)
+    try:
+        raw=infer(text)
+    except Exception as exc:
+        print("text_inference_failed:"+type(exc).__name__)
+        raw="{}"
     decision=decide(raw)
+    chat_reply=conversation(raw)
     if decision.action == "allow":
-        return "allowed"
-    if decision.action == "clarify":
-        reply="Could you rephrase that in English?"
-    elif decision.action == "warn":
-        reply=lesson(raw,decision)
+        try: correct=json.loads(raw).get("category")=="correct"
+        except (ValueError,AttributeError,TypeError): correct=False
+        reply=chat_reply or ("Your English looks good! Let's keep talking." if correct else "I couldn't fully understand that. Could you tell me more?")
+    elif decision.action == "clarify":
+        reply=chat_reply or "Could you rephrase that in English?"
     else:
-        reply=lesson(raw,decision)
+        reply=(chat_reply+"\n\n" if chat_reply else "")+lesson(raw,decision)
     send(token,"sendMessage",{"chat_id":group_id,"text":reply[:3500],
-        "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":False},
+        "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
         "link_preview_options":{"is_disabled":True}})
     return decision.action
 
@@ -196,6 +199,8 @@ def handler(event, context):
             else:
                 if text.startswith('/') or consume_quota():
                     handle_update(update,group_id,token)
+                elif consume_quota('notice',((60,5),(86400,60))):
+                    voice_notice(token,group_id,message,'Text practice limit reached. Please try again later.')
         return response(200)
     except Exception as exc:
         print("handler_failed:"+type(exc).__name__)
