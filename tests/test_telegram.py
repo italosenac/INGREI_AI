@@ -206,3 +206,25 @@ class TelegramTests(unittest.TestCase):
             def converse(self,**kw):
                 return {"stopReason":"end_turn","output":{"message":{"content":[{"text":json.dumps({"category":"foreign_only","source_language":"pt","correction":"Where is your dog?","explanation":"Seu means your here."})}]}}}
         self.assertEqual(json.loads(analyze("Onde está seu cachorro?",Client()))["correction"],"Where is your dog?")
+
+    def test_idiom_calque_repair(self):
+        class Client:
+            calls=0
+            def converse(self,**kw):
+                self.calls+=1
+                data={"category":"foreign_only","source_language":"pt","correction":"We stepped on the ball with our friend." if self.calls==1 else "We let our friend down.","explanation":"Use an idiomatic equivalent."}
+                return {"stopReason":"end_turn","output":{"message":{"content":[{"text":json.dumps(data)}]}}}
+        client=Client()
+        data=json.loads(analyze("Nós pisamos na bola com nosso amigo.",client))
+        self.assertEqual(data["correction"],"We let our friend down.")
+        self.assertEqual(client.calls,2)
+    def test_literal_football_not_forced_to_idiom(self):
+        class Client:
+            def converse(self,**kw):
+                data={"category":"foreign_only","source_language":"pt","correction":"He stepped on the ball during the match.","explanation":"Literal action in football."}
+                return {"stopReason":"end_turn","output":{"message":{"content":[{"text":json.dumps(data)}]}}}
+        self.assertEqual(json.loads(analyze("Ele pisou na bola durante o jogo.",Client()))["correction"],"He stepped on the ball during the match.")
+    def test_disappointment_idiom_local(self):
+        class NoModel:
+            def converse(self,**kw): raise AssertionError("local")
+        self.assertEqual(json.loads(analyze("Ele pisou na bola comigo.",NoModel()))["correction"],"He let me down.")
