@@ -5,7 +5,7 @@ import os
 import re
 import urllib.request
 import uuid
-from .knowledge import lesson, safe_text, CATALOG
+from .knowledge import lesson, safe_text, CATALOG, conversation
 from .policy import decide
 from .inference import analyze_voice
 
@@ -79,6 +79,7 @@ def voice_feedback(text, confidence, infer=analyze_voice):
     raw=infer(("Uncertain speech hypotheses (not confirmed): "+text if tentative else text)[:2000])
     d=decide(raw)
     prefix=("Possible words I recognized: " if tentative else "What I understood: ")+safe_text(text,1000)+"\n\n"
+    if not tentative and conversation(raw): prefix+=conversation(raw)+"\n\n"
     if d.action=="clarify":
         try:
             data=json.loads(raw)
