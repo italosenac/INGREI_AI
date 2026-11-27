@@ -86,5 +86,10 @@ def process_voice(token, group_id, message, telegram):
     telegram(token,"sendMessage",{"chat_id":group_id,"text":reply[:3500],
         "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":False},
         "link_preview_options":{"is_disabled":True}})
-    if spoken: send_voice(token,group_id,message["message_id"],spoken)
+    if spoken:
+        try:
+            send_voice(token,group_id,message["message_id"],spoken)
+        except Exception:
+            # Keep successful text feedback if audio playback fails.
+            return "text_only"
     return "complete"
