@@ -6,8 +6,8 @@ import json
 import os
 import urllib.request
 from .policy import decide, eligible
-from .inference import analyze
-from .knowledge import lesson, command_reply, conversation, safe_text
+from .inference import analyze, review_passage
+from .knowledge import lesson, command_reply, conversation, safe_text, passage_parts, passage_batches, passage_notes, message_chunks, CATALOG
 from .speech import process_voice, voice_allowed, send_voice
 
 def telegram(token, method, payload):
@@ -26,7 +26,61 @@ def config():
     secret=boto3.client("secretsmanager").get_secret_value(SecretId=os.environ["SECRET_ARN"])
     return json.loads(secret["SecretString"])
 
-def handle_update(update, group_id, token, infer=analyze, send=telegram):
+def handle_passage(message,group_id,token,send,review=None):
+    review=review or review_passage
+    parts=passage_parts(message["text"])
+    batches=passage_batches(parts)
+    results=[]
+    replies=[]
+    def evaluate(batch):
+        try: return review(batch)
+        except Exception as exc:
+            print("passage_review_failed:"+type(exc).__name__)
+            return None
+    for batch in batches:
+        data=evaluate(batch)
+        if data is None and len(batch)>1:
+            mid=len(batch)//2
+            groups=[(batch[:mid],evaluate(batch[:mid])),(batch[mid:],evaluate(batch[mid:]))]
+        else:
+            groups=[(batch,data)]
+        for group,data in groups:
+            if data is None:
+                results.extend((p,None) for p in group)
+                continue
+            reply=safe_text(data.get("conversational_reply"),700)
+            if reply: replies.append(reply)
+            results.extend(zip(group,data["paragraphs"]))
+    def post(text,target=""):
+        payload={"chat_id":group_id,"text":text,
+            "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
+            "link_preview_options":{"is_disabled":True}}
+        if target and len(target)<=500:
+            payload["text"]+="\n\n🔊 Pronunciation: "+target+"\nWould you like to hear the pronunciation?"
+            payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v1"}]]}
+        send(token,"sendMessage",payload)
+    if replies:
+        for part in message_chunks("\n\n".join(dict.fromkeys(replies))): post(part)
+    all_correct=all(row is not None and not row["errors"] for _,row in results)
+    if all_correct: post("✅ Your entire text looks correct! Well done!")
+    for i,(original,row) in enumerate(results,1):
+        label=f"Part {i}/{len(results)}"
+        if row is None:
+            post(label+" — I could not complete this part. Please resend it separately.\n\n"+safe_text(original,1000))
+            continue
+        corrected=safe_text(row["corrected"],len(row["corrected"]))
+        notes,topics=passage_notes(row)
+        header=label+(" — Suggested correction:" if row["errors"] else " — Correct!")
+        body=header+"\n\n"+corrected
+        if notes: body+="\n\nWhy:\n"+"\n".join(notes)
+        if topics: body+="\n\nLearn more:\n"+"\n".join(CATALOG[t][0]+": "+CATALOG[t][1] for t in topics)
+        for chunk in message_chunks(body): post(chunk)
+        for target in passage_parts(corrected,480):
+            target=" ".join(target.split())
+            if target: post("Listening practice — "+label,target)
+    return "passage" if all(row is not None for _,row in results) else "partial_passage"
+
+def handle_update(update, group_id, token, infer=analyze, send=telegram, review=None):
     message=update.get("message", {})
     if not isinstance(message,dict) or not eligible(message,group_id):
         return "ignored"
@@ -40,6 +94,8 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram):
             send(token,"sendMessage",{"chat_id":group_id,"text":reply,"reply_parameters":{"message_id":message["message_id"]},"link_preview_options":{"is_disabled":True}})
             return "command"
         return "ignored"
+    if len(text)>450 or len([p for p in text.splitlines() if p.strip()])>=3:
+        return handle_passage(message,group_id,token,send,review)
     try:
         raw=infer(text)
     except Exception as exc:
