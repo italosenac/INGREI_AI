@@ -29,7 +29,9 @@ def send_voice(token, group_id, message_id, text):
     req=urllib.request.Request("https://api.telegram.org/bot"+token+"/sendVoice",data=b"".join(chunks),
         headers={"Content-Type":"multipart/form-data; boundary="+boundary})
     with urllib.request.urlopen(req,timeout=10) as response:
-        if not json.load(response).get("ok"): raise RuntimeError("voice send failed")
+        payload=json.load(response)
+        if not payload.get("ok"): raise RuntimeError("voice send failed")
+        return payload["result"]["message_id"]
 
 def transcribe_bytes(audio, client=None):
     """Invoke the private Whisper worker; no S3 or external transcription API."""
