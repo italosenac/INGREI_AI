@@ -7,7 +7,7 @@ import os
 import urllib.request
 from .policy import decide, eligible
 from .inference import analyze
-from .knowledge import lesson
+from .knowledge import lesson, command_reply
 from .speech import process_voice, voice_allowed, send_voice
 
 def telegram(token, method, payload):
@@ -31,7 +31,16 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram):
     if not isinstance(message,dict) or not eligible(message,group_id):
         return "ignored"
     text=message["text"].strip()
-    if text.startswith("/") or not any(c.isalpha() for c in text):
+    if text.startswith("/"):
+        command, _, arg=text.partition(" ")
+        command, sep, target=command.lower().partition("@")
+        if sep and target!="techverseenglishbot": return "ignored"
+        reply=command_reply(command,arg)
+        if reply:
+            send(token,"sendMessage",{"chat_id":group_id,"text":reply,"reply_parameters":{"message_id":message["message_id"]},"link_preview_options":{"is_disabled":True}})
+            return "command"
+        return "ignored"
+    if not any(c.isalpha() for c in text):
         return "ignored"
     raw=infer(text)
     decision=decide(raw)
@@ -137,9 +146,11 @@ def handler(event, context):
             boto3.client("lambda").invoke(FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],InvocationType="Event",Payload=json.dumps({"operation":"voice_worker","message":minimal}).encode())
         else:
             text=message['text'].strip()
-            if text.startswith('/listen '):
+            cmd, _, arg=text.partition(' ')
+            name, sep, target=cmd.lower().partition('@')
+            if name=='/listen' and (not sep or target=='techverseenglishbot'):
                 if consume_quota('playback',((60,2),(86400,30))):
-                    spoken=text[len('/listen '):].strip()[:500]
+                    spoken=arg.strip()[:500]
                     if spoken: send_voice(token,group_id,message['message_id'],spoken)
             else:
                 handle_update(update,group_id,token)
