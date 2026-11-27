@@ -2,7 +2,8 @@ import json
 import unittest
 from src.knowledge import lesson, CATALOG
 from src.policy import decide
-from src.speech import voice_allowed, voice_feedback, transcribe_bytes
+from src.inference import analyze, local_analysis
+from src.speech import voice_allowed, voice_feedback, transcribe_bytes, synthesize_bytes
 from unittest.mock import patch
 import io
 import os
@@ -118,3 +119,29 @@ class MultimodalTests(unittest.TestCase):
         self.assertIsNone(retry_target(msg,-999))
         self.assertIsNone(retry_target(dict(msg,text="/retry@otherbot"),-123))
         self.assertIsNone(retry_target(dict(msg,reply_to_message=dict(original,chat={"id":-999,"type":"supergroup"})),-123))
+
+    def test_local_rule_no_bedrock(self):
+        class Client:
+            def converse(self,**kw): raise AssertionError("local rule must not call Bedrock")
+        d=decide(analyze("I am agree with you.",Client()))
+        self.assertEqual(d.correction,"I agree with you.")
+        self.assertEqual(decide(analyze("Hello!",Client())).action,"allow")
+        self.assertIsNone(local_analysis("I am agree with you.",voice=True))
+        self.assertIsNone(local_analysis("A new unfamiliar sentence."))
+    def test_piper_adapter(self):
+        import base64
+        audio=b"x"*200
+        class Client:
+            def invoke(self,**kwargs):
+                self.kwargs=kwargs
+                return {"Payload":io.BytesIO(json.dumps({"status":"complete","format":"mp3","audio":base64.b64encode(audio).decode()}).encode())}
+        client=Client()
+        with patch.dict(os.environ,{"WHISPER_FUNCTION":"test-worker"}):
+            self.assertEqual(synthesize_bytes("Hello",client),audio)
+        self.assertEqual(json.loads(client.kwargs["Payload"]),{"operation":"synthesize","text":"Hello"})
+    def test_piper_rejects_failed_response(self):
+        class Client:
+            def invoke(self,**kwargs):
+                return {"Payload":io.BytesIO(b'{"status":"error"}')}
+        with patch.dict(os.environ,{"WHISPER_FUNCTION":"test-worker"}):
+            with self.assertRaises(RuntimeError): synthesize_bytes("Hello",Client())
