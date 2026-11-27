@@ -1,0 +1,228 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "On-demand open-source speech model image build; isolated from live TechVerse tutor.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    }
+  },
+  "Resources": {
+    "Registry": {
+      "Type": "AWS::ECR::Repository",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Store a single versioned private Whisper image",
+          "must": "No public repository; scan images; retain only recent build images"
+        }
+      },
+      "Properties": {
+        "RepositoryName": "techverse-english-whisper",
+        "ImageTagMutability": "IMMUTABLE",
+        "ImageScanningConfiguration": {
+          "ScanOnPush": true
+        },
+        "EncryptionConfiguration": {
+          "EncryptionType": "AES256"
+        },
+        "LifecyclePolicy": {
+          "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Keep last 2 images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":2},\"action\":{\"type\":\"expire\"}}]}"
+        },
+        "RepositoryPolicyText": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "LambdaRetrieval",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": [
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer"
+              ],
+              "Condition": {
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:techverse-english-whisper"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "INGREI_AI"
+          }
+        ]
+      }
+    },
+    "BuildLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Short-lived build diagnostics",
+          "must": "No learner data or credentials"
+        }
+      },
+      "Properties": {
+        "LogGroupName": "/aws/codebuild/techverse-english-whisper",
+        "RetentionInDays": 7
+      }
+    },
+    "BuildRole": {
+      "Type": "AWS::IAM::Role",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Allow image build to write only its ECR repository and logs",
+          "must": "No access to tutor secrets, student data or Lambda deployments"
+        }
+      },
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "codebuild.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/techverse-english-whisper"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "BuildImageOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ecr:GetAuthorizationToken",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:InitiateLayerUpload",
+                    "ecr:UploadLayerPart",
+                    "ecr:CompleteLayerUpload",
+                    "ecr:PutImage",
+                    "ecr:BatchGetImage",
+                    "ecr:GetDownloadUrlForLayer"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Registry",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/techverse-english-whisper:*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Build": {
+      "Type": "AWS::CodeBuild::Project",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "One-off reproducible model packaging",
+          "must": "No schedule, no secrets, max 15 minute build, offline health check before push"
+        }
+      },
+      "Properties": {
+        "Name": "techverse-english-whisper",
+        "ServiceRole": {
+          "Fn::GetAtt": [
+            "BuildRole",
+            "Arn"
+          ]
+        },
+        "Source": {
+          "Type": "NO_SOURCE",
+          "BuildSpec": "{\"version\":0.2,\"phases\":{\"build\":{\"commands\":[\"set -eu\",\"mkdir -p speech_worker\",\"cat > speech_worker/Dockerfile <<'END_DOCKERFILE'\\nFROM public.ecr.aws/lambda/python:3.12\\nENV HF_HUB_DISABLE_TELEMETRY=1 HF_HUB_OFFLINE=1 HF_HUB_DISABLE_XET=1\\nRUN pip install --no-cache-dir \\\"faster-whisper==1.2.1\\\"\\nRUN HF_HUB_OFFLINE=0 python -c \\\"from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-base',local_dir='/opt/model',allow_patterns=['config.json','model.bin','tokenizer.json','vocabulary.txt'])\\\" && echo \\\"d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9  /opt/model/model.bin\\\" | sha256sum -c -\\nCOPY handler.py ${LAMBDA_TASK_ROOT}/handler.py\\nCMD [\\\"handler.handler\\\"]\\nEND_DOCKERFILE\",\"cat > speech_worker/handler.py <<'END_HANDLER'\\n\\\"\\\"\\\"Private speech-to-text Lambda: no recording or transcript persistence.\\\"\\\"\\\"\\nimport base64\\nimport io\\nimport math\\nimport os\\n\\n_MODEL = None\\n\\ndef model():\\n    global _MODEL\\n    if _MODEL is None:\\n        from faster_whisper import WhisperModel\\n        _MODEL = WhisperModel(\\\"/opt/model\\\", device=\\\"cpu\\\", compute_type=\\\"int8\\\", cpu_threads=2, local_files_only=True)\\n    return _MODEL\\n\\ndef handler(event, context):\\n    if event.get(\\\"operation\\\") == \\\"health\\\":\\n        model()\\n        return {\\\"status\\\":\\\"ready\\\",\\\"model\\\":\\\"whisper-base\\\",\\\"device\\\":\\\"cpu\\\",\\\"compute_type\\\":\\\"int8\\\"}\\n    try:\\n        encoded=event.get(\\\"audio\\\",\\\"\\\")\\n        if not isinstance(encoded,str) or len(encoded)>2666672:\\n            return {\\\"status\\\":\\\"invalid\\\"}\\n        audio=base64.b64decode(encoded,validate=True)\\n        if not audio or len(audio)>2000000:\\n            return {\\\"status\\\":\\\"invalid\\\"}\\n        from faster_whisper.audio import decode_audio\\n        samples=decode_audio(io.BytesIO(audio),sampling_rate=16000)\\n        if not 800<=len(samples)<=16000*31:\\n            return {\\\"status\\\":\\\"invalid_duration\\\"}\\n        segments,info=model().transcribe(samples,beam_size=3,task=\\\"transcribe\\\",\\n            vad_filter=True,condition_on_previous_text=False,\\n            word_timestamps=False)\\n        parts=list(segments)\\n        text=\\\" \\\".join(s.text.strip() for s in parts).strip()[:2000]\\n        # avg_logprob is a model diagnostic, not pronunciation or calibrated accuracy.\\n        weak=not parts or any(not math.isfinite(s.avg_logprob) or s.avg_logprob < -1.2 for s in parts)\\n        return {\\\"status\\\":\\\"uncertain\\\" if weak or not text else \\\"complete\\\",\\n                \\\"text\\\":text if not weak else \\\"\\\", \\\"language\\\":info.language}\\n    except Exception:\\n        return {\\\"status\\\":\\\"error\\\"}\\nEND_HANDLER\",\"aws ecr get-login-password --region \\\"$AWS_DEFAULT_REGION\\\" | docker login --username AWS --password-stdin \\\"${ECR_URI%%/*}\\\"\",\"docker build --platform linux/amd64 -t \\\"$ECR_URI:whisper-v1\\\" speech_worker\",\"docker run --rm --network none --entrypoint python \\\"$ECR_URI:whisper-v1\\\" -c 'import handler; assert handler.handler({\\\"operation\\\":\\\"health\\\"},None)[\\\"status\\\"]==\\\"ready\\\"; print(\\\"offline model health passed\\\")'\",\"docker push \\\"$ECR_URI:whisper-v1\\\"\"]}}}"
+        },
+        "Artifacts": {
+          "Type": "NO_ARTIFACTS"
+        },
+        "Environment": {
+          "Type": "LINUX_CONTAINER",
+          "ComputeType": "BUILD_GENERAL1_SMALL",
+          "Image": "aws/codebuild/standard:7.0",
+          "PrivilegedMode": true,
+          "EnvironmentVariables": [
+            {
+              "Name": "ECR_URI",
+              "Value": {
+                "Fn::GetAtt": [
+                  "Registry",
+                  "RepositoryUri"
+                ]
+              },
+              "Type": "PLAINTEXT"
+            }
+          ]
+        },
+        "TimeoutInMinutes": 15,
+        "QueuedTimeoutInMinutes": 15,
+        "ConcurrentBuildLimit": 1,
+        "LogsConfig": {
+          "CloudWatchLogs": {
+            "Status": "ENABLED",
+            "GroupName": {
+              "Ref": "BuildLogs"
+            }
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "INGREI_AI"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "RepositoryUri": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Registry",
+          "RepositoryUri"
+        ]
+      }
+    },
+    "BuildProject": {
+      "Value": {
+        "Ref": "Build"
+      }
+    }
+  }
+}
