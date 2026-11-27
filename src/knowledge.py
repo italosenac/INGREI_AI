@@ -21,6 +21,10 @@ CATALOG = {
     "Beginner grammar: articles",
     "https://learnenglish.britishcouncil.org/free-resources/grammar/a1-a2"
   ],
+  "place": ["Prepositions of place", "https://learnenglish.britishcouncil.org/free-resources/grammar/a1-a2/prepositions-place"],
+  "time": ["Prepositions of time", "https://learnenglish.britishcouncil.org/free-resources/grammar/a1-a2-grammar/prepositions-of-time-at-in-on"],
+  "comparatives": ["Comparative adjectives", "https://learnenglish.britishcouncil.org/free-resources/grammar/a1-a2/comparative-adjectives"],
+  "perfect_continuous": ["Present perfect simple and continuous", "https://learnenglish.britishcouncil.org/free-resources/grammar/b1-b2/present-perfect-simple-continuous"],
   "countability": [
     "Countable and uncountable nouns",
     "https://learnenglish.britishcouncil.org/free-resources/grammar/a1-a2/nouns-countable-uncountable"
