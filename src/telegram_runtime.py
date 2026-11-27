@@ -329,7 +329,7 @@ def handler(event, context):
                         try: category=json.loads(raw).get("category")
                         except (ValueError,AttributeError,TypeError): category=None
                         target_text=decision.correction if decision.action in ("correct","warn") else spoken if category=="correct" else ""
-                        if target_text and not foreign_evidence(target_text):
+                        if target_text and not foreign_evidence(target_text) and english_evidence(target_text):
                             if target_text!=spoken: voice_notice(token,group_id,message,"English version: "+target_text)
                             send_voice(token,group_id,message["message_id"],target_text)
                         else: voice_notice(token,group_id,message,"I could not verify an English version. Please try again.")
