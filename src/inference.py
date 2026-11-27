@@ -76,7 +76,7 @@ def language_evidence(text):
     if exact in {"oi","olá","ola","obrigado","obrigada","tchau","bom dia","boa tarde","boa noite","tudo bem","sim","não","nao","valeu","até amanhã","ate amanha"}: return "portuguese"
     # Distinctive function words, not names or international vocabulary.
     markers={
-        "spanish":"yo tú tu usted ustedes nosotros vosotros ellos ellas ella muy también tambien tengo tienes tenemos tienen soy somos estoy estamos están está eres es pero porque quiero quieres gusta gustan gustaría gracias hola buenos buenas días dias noche noches cómo como cuándo donde dónde qué que quién quien años año hermana hermano madre padre personas cuatro cinco seis ocho nueve diez doce perro casa llamo llaman nuestra nuestros vuestro",
+        "spanish":"mi mis yo tú tu usted ustedes nosotros vosotros ellos ellas ella muy también tambien tengo tienes tenemos tienen soy somos estoy estamos están está eres es pero porque quiero quieres gusta gustan gustaría gracias hola buenos buenas días dias noche noches cómo como cuándo donde dónde qué que quién quien años año hermana hermano madre padre personas cuatro cinco seis ocho nueve diez doce perro casa llamo llaman nuestra nuestros vuestro",
         "french":"je j'ai j'aime tu vous nous ils elles suis sommes êtes sont avec dans pour mais très merci bonjour salut aujourd'hui demain pourquoi comment combien beaucoup mon ma mes ton tes votre notre leurs une les des est ai avons avez veux veut peux peut français",
         "italian":"io sono siamo siete sei ho hai abbiamo hanno voglio vuoi posso puoi grazie ciao buongiorno buonasera molto anche perché perche come dove quando questo questa questi queste della delle degli nello nella gli lei loro noi voi non oggi domani",
         "german":"ich du er sie wir ihr bin bist ist sind seid habe hast haben hat möchte moechte kann kannst können nicht und oder aber sehr danke hallo guten morgen heute morgen gestern warum wie was wo wann mein meine dein deine dieser diese das dem den der die ein eine einen einem mit für fuer",
@@ -89,6 +89,7 @@ def language_evidence(text):
     # A lone name, loanword or a quoted word must not decide the language.
     if re.search(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0900-\u097f]",text) and strong_en==0:
         return "foreign"
+    if exact in {"hola","gracias","buenos días","buenos dias","buenas tardes","buenas noches","bonjour","merci","ciao","grazie","danke","guten tag","hallo","dankjewel","bedankt"}: return "foreign"
     if scores[other]>=3 and scores[other]>p and strong_en<=1: return other
     if p>=2 and strong_en==0: return "portuguese"
     if scores[other]>=2 and strong_en>=2 and scores[other]>=strong_en: return "mixed"
