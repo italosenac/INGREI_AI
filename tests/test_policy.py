@@ -25,5 +25,9 @@ class PolicyTests(unittest.TestCase):
     def test_fences(self):
         self.assertEqual(normalize('```json\n{}\n```'),"{}")
 
+    def test_tone_is_not_grammar(self):
+        self.assertEqual(decide('{"category":"english_error","correction":"What are you talking about?","explanation":"The phrase is rude and informal."}').action,"allow")
+        self.assertEqual(decide('{"category":"english_error","correction":"You are rude.","explanation":"Missing verb: use are with you."}').action,"correct")
+
 if __name__=="__main__":
     unittest.main()
