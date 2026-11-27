@@ -6,7 +6,7 @@ import json
 import os
 import urllib.request
 from .policy import decide, eligible
-from .inference import analyze, review_passage, guard_language, foreign_evidence
+from .inference import analyze, review_passage, guard_language, foreign_evidence, english_evidence
 from .knowledge import lesson, command_reply, conversation, safe_text, passage_parts, passage_batches, passage_notes, message_chunks, CATALOG
 from .speech import process_voice, voice_allowed, send_voice
 
@@ -60,7 +60,7 @@ def handle_passage(message,group_id,token,send,review=None):
         payload={"chat_id":group_id,"text":text,
             "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
             "link_preview_options":{"is_disabled":True}}
-        if target and len(target)<=500 and not foreign_evidence(target):
+        if target and len(target)<=500 and not foreign_evidence(target) and english_evidence(target):
             payload["text"]+="\n\n🔊 Pronunciation: "+target+"\nWould you like to hear the pronunciation?"
             payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v2"}]]}
         send(token,"sendMessage",payload)
@@ -173,7 +173,7 @@ def handle_pronunciation(callback,group_id,token,send=None,play=None,quota=None)
     target=pronunciation_target(callback,group_id)
     if not target: return "ignored"
     cid=callback["id"]
-    if callback.get("data")=="pronounce:v1" or foreign_evidence(target):
+    if callback.get("data")=="pronounce:v1" or foreign_evidence(target) or not english_evidence(target):
         send(token,"answerCallbackQuery",{"callback_query_id":cid,"text":"This pronunciation offer is outdated or not English. Please resend the sentence for a new English version.","show_alert":True})
         return "foreign"
     if not quota("playback",((60,2),(86400,30))):
