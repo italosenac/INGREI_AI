@@ -65,6 +65,14 @@ def handler(event, context):
         cfg=config()
         token=cfg["TELEGRAM_BOT_TOKEN"]
         if "requestContext" not in event:
+            if event.get("operation") == "delivery_selftest":
+                if expired(): return {"status":"expired"}
+                group_id=int(cfg.get("GROUP_ID",0))
+                if not group_id: return {"status":"group_missing"}
+                sample="I like learning English every day."
+                sent=telegram(token,"sendMessage",{"chat_id":group_id,"text":"TechVerse Tutor — deployment test.\n"+sample+"\nListen and repeat!","link_preview_options":{"is_disabled":True}})
+                voice_id=send_voice(token,group_id,sent["message_id"],sample)
+                return {"status":"delivered","text_message_id":sent["message_id"],"voice_message_id":voice_id}
             if event.get("operation") == "voice_worker":
                 if expired(): return {"status":"expired"}
                 group_id=int(cfg.get("GROUP_ID",0))
