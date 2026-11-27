@@ -8,7 +8,7 @@ import urllib.request
 from .policy import decide, eligible
 from .inference import analyze
 from .knowledge import lesson
-from .speech import process_voice, voice_allowed
+from .speech import process_voice, voice_allowed, send_voice
 
 def telegram(token, method, payload):
     request = urllib.request.Request(
@@ -128,12 +128,21 @@ def handler(event, context):
         if not consume_quota():
             return response(200)
         if is_voice:
+            if os.environ.get("VOICE_INPUT_ENABLED","false").lower()!="true":
+                telegram(token,"sendMessage",{"chat_id":group_id,"text":"Voice recognition is temporarily unavailable. You can still practice listening with /listen followed by an English sentence.","reply_parameters":{"message_id":message["message_id"]}})
+                return response(200)
             if not consume_quota("voice",((60,2),(86400,30))):
                 return response(200)
             minimal={"chat":{"id":group_id,"type":message["chat"]["type"]},"from":{"is_bot":False},"message_id":message["message_id"],"voice":{k:message["voice"][k] for k in ("file_id","duration","file_size") if k in message["voice"]}}
             boto3.client("lambda").invoke(FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],InvocationType="Event",Payload=json.dumps({"operation":"voice_worker","message":minimal}).encode())
         else:
-            handle_update(update,group_id,token)
+            text=message['text'].strip()
+            if text.startswith('/listen '):
+                if consume_quota('playback',((60,2),(86400,30))):
+                    spoken=text[len('/listen '):].strip()[:500]
+                    if spoken: send_voice(token,group_id,message['message_id'],spoken)
+            else:
+                handle_update(update,group_id,token)
         return response(200)
     except Exception:
         # Never expose raw payload, token, or provider exception.
