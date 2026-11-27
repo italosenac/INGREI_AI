@@ -28,6 +28,19 @@ class TelegramTests(unittest.TestCase):
         self.assertEqual(handle_update(self.update,-123,"fake",lambda t:'{"category":"correct"}',self.send),"allowed")
         self.assertEqual(self.calls,[])
     def test_command_ignored(self):
-        self.update["message"]["text"]="/start"
+        self.update["message"]["text"]="/unknown"
+        self.assertEqual(handle_update(self.update,-123,"fake",self.infer,self.send),"ignored")
+        self.assertEqual(self.calls,[])
+
+    def test_help_command(self):
+        self.update["message"]["text"]="/help@techverseEnglishBot"
+        self.assertEqual(handle_update(self.update,-123,"fake",lambda t:self.fail("no model for commands"),self.send),"command")
+        self.assertIn("/learn",self.calls[0][1]["text"])
+    def test_learn_command(self):
+        self.update["message"]["text"]="/learn past"
+        self.assertEqual(handle_update(self.update,-123,"fake",lambda t:self.fail("no model for commands"),self.send),"command")
+        self.assertIn("https://learnenglish.britishcouncil.org/",self.calls[0][1]["text"])
+    def test_other_bot_command(self):
+        self.update["message"]["text"]="/help@otherbot"
         self.assertEqual(handle_update(self.update,-123,"fake",self.infer,self.send),"ignored")
         self.assertEqual(self.calls,[])
