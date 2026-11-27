@@ -228,3 +228,41 @@ class TelegramTests(unittest.TestCase):
         class NoModel:
             def converse(self,**kw): raise AssertionError("local")
         self.assertEqual(json.loads(analyze("Ele pisou na bola comigo.",NoModel()))["correction"],"He let me down.")
+
+    def test_short_foreign_word_translation_no_paid_call(self):
+        class NoModel:
+            def converse(self,**kw): raise AssertionError("known words use local translation")
+        for source,expected in [("Perfeito","Perfect!"),("Perfeita!","Perfect!"),("Excelente","Excellent!"),("Perfecto","Perfect!"),("Parfait","Perfect!"),("Perfetto","Perfect!"),("Wunderbar","Wonderful!"),("ありがとう","Thank you!")]:
+            self.assertTrue(foreign_evidence(source),source)
+            result=json.loads(analyze(source,NoModel()))
+            self.assertEqual(result["correction"],expected)
+            self.calls.clear()
+            self.update["message"]["text"]=source
+            self.assertEqual(handle_update(self.update,-123,"fake",analyze,self.send),"warn")
+            reply=self.calls[0][1]["text"]
+            self.assertIn("Natural English: "+expected,reply)
+            self.assertIn("Pronunciation: "+expected,reply)
+            self.assertNotIn("That's correct!",reply)
+    def test_unknown_short_word_no_false_praise(self):
+        class Client:
+            calls=0
+            def converse(self,**kw):
+                self.calls+=1
+                return {"stopReason":"end_turn","output":{"message":{"content":[{"text":'{"category":"correct","source_language":"en","conversational_reply":"Great!"}'}]}}}
+        client=Client()
+        self.assertEqual(json.loads(analyze("zdravstvuyte",client))["category"],"unclear")
+        self.assertEqual(client.calls,2)
+        self.update["message"]["text"]="zdravstvuyte"
+        handle_update(self.update,-123,"fake",lambda t:'{"category":"correct","source_language":"en"}',self.send)
+        self.assertNotIn("That's correct!",self.calls[0][1]["text"])
+        self.assertNotIn("reply_markup",self.calls[0][1])
+    def test_valid_short_english_still_accepted(self):
+        for sample in ("Perfect!","Excellent","Awesome","OK","No","Hotel","Pizza","Serendipity"):
+            self.calls.clear()
+            self.update["message"]["text"]=sample
+            handle_update(self.update,-123,"fake",lambda t:'{"category":"correct","source_language":"en","conversational_reply":"Great!"}',self.send)
+            self.assertIn("That's correct!",self.calls[0][1]["text"],sample)
+            self.assertIn("reply_markup",self.calls[0][1],sample)
+    def test_old_perfeito_pronunciation_blocked(self):
+        cb={"id":"cb1","data":"pronounce:v2","from":{"id":7},"message":{"chat":{"id":-123,"type":"supergroup"},"from":{"is_bot":True,"username":"techverseEnglishBot"},"message_id":8,"text":"Old reply\n\n🔊 Pronunciation: Perfeito\nWould you like to hear the pronunciation?"}}
+        self.assertEqual(handle_pronunciation(cb,-123,"fake",self.send,lambda *a:self.fail("foreign playback"),lambda *a:True),"foreign")
