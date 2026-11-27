@@ -22,6 +22,12 @@ def decide(raw: str, deletion_enabled: bool = False) -> Decision:
             return Decision("allow")
         if category in ("correct", "ambiguous", "nonlinguistic"):
             return Decision("allow")
+        if category == "english_error":
+            import re
+            tone = re.search(r"\b(rude|polite|politely|impolite|offensive|respectful|respectfully|formal|informal|insult|profanity)\b", explanation, re.I)
+            grammar = re.search(r"\b(tense|agreement|subject|plural|singular|article|preposition|auxiliary|spelling|conjugation|word order|verb form|pronoun|adverb|determiner|missing verb)\b", explanation, re.I)
+            if tone and not grammar:
+                return Decision("allow")
         if category in ("english_error", "mixed", "phonetic") and correction.strip():
             return Decision("correct", correction.strip(), explanation.strip())
         if category == "unclear":
