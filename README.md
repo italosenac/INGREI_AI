@@ -27,3 +27,6 @@ Unit tests use mocks for Telegram; real voice delivery in the group must be veri
 See specs/001-mvp/spec.md, specs/002-multimodal/spec.md and infra/ for specifications and deployment templates.
 
 The Piper engine is GPL-licensed; model card and licensing information are packaged in the private worker. See https://github.com/OHF-Voice/piper1-gpl and https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/ljspeech/medium/MODEL_CARD. Open-source inference still consumes AWS compute. The 120/day audio allowance is shared by the group, and individual audio notes remain limited to 30 seconds.
+
+## Conversation mode
+The tutor replies naturally in English to eligible text and voice, even when the grammar is correct. Ordinary profanity alone is not a grammar error; the tutor answers without retaliating. Genuine errors still receive a correction and learning resources. Unknown or ambiguous speech receives clarification. Group isolation, rate limits, platform safeguards and no-logging rules remain in force. `/retry` is for a previous voice note, not a text message.
