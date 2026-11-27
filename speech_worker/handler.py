@@ -42,8 +42,18 @@ def handler(event, context):
         text=" ".join(s.text.strip() for s in parts).strip()[:2000]
         # avg_logprob is a model diagnostic, not pronunciation or calibrated accuracy.
         weak=not parts or any(not math.isfinite(s.avg_logprob) or s.avg_logprob < -1.2 for s in parts)
-        return {"status":"uncertain" if weak or not text else "complete",
-                "text":text if not weak else "", "language":info.language}
+        if not weak and text:
+            return {"status":"complete","text":text,"language":info.language}
+        # A second English-biased pass only for weak recognition. Never force a
+        # result for silence; do not equate these hypotheses with actual words.
+        if context is None or context.get_remaining_time_in_millis()>22000:
+            alternate_segments,_=model().transcribe(samples,language="en",beam_size=3,
+                task="transcribe",vad_filter=False,condition_on_previous_text=False,
+                no_speech_threshold=0.6,log_prob_threshold=-1.0)
+            alt=" ".join(s.text.strip() for s in alternate_segments).strip()[:1000]
+        else:
+            alt=""
+        return {"status":"uncertain","text":text[:1000],"alternate":alt,"language":info.language}
     except Exception as exc:
         # Only operational diagnostics, never record audio or transcript.
         return {"status":"error","stage":stage,"error_type":type(exc).__name__}
