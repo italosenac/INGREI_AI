@@ -163,6 +163,41 @@
           }
         ]
       }
+    },
+    "WebhookUrl": {
+      "Type": "AWS::Lambda::Url",
+      "Properties": {
+        "TargetFunctionArn": {
+          "Fn::GetAtt": [
+            "Tutor",
+            "Arn"
+          ]
+        },
+        "AuthType": "NONE",
+        "InvokeMode": "BUFFERED"
+      }
+    },
+    "WebhookUrlPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Tutor"
+        },
+        "Action": "lambda:InvokeFunctionUrl",
+        "Principal": "*",
+        "FunctionUrlAuthType": "NONE"
+      }
+    },
+    "WebhookInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Tutor"
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "*",
+        "InvokedViaFunctionUrl": true
+      }
     }
   },
   "Outputs": {
@@ -174,6 +209,14 @@
     "SecretArn": {
       "Value": {
         "Ref": "TelegramSecret"
+      }
+    },
+    "WebhookUrl": {
+      "Value": {
+        "Fn::GetAtt": [
+          "WebhookUrl",
+          "FunctionUrl"
+        ]
       }
     }
   }
