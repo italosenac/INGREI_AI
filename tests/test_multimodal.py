@@ -6,7 +6,7 @@ from src.speech import voice_allowed, voice_feedback, transcribe_bytes
 from unittest.mock import patch
 import io
 import os
-from src.telegram_runtime import voice_eligible, handle_update
+from src.telegram_runtime import voice_eligible, handle_update, voice_candidate, voice_notice
 
 class MultimodalTests(unittest.TestCase):
     def test_topic_link(self):
@@ -32,9 +32,9 @@ class MultimodalTests(unittest.TestCase):
         msg["from"]["is_bot"]=True
         self.assertFalse(voice_eligible(msg,-123))
     def test_voice_low_confidence(self):
-        reply,spoken=voice_feedback("hello",0.2,lambda t:self.fail("should not infer"))
+        reply,spoken=voice_feedback("hello",0.2,lambda t: '{"category":"correct"}')
         self.assertFalse(spoken)
-        self.assertIn("try again",reply)
+        self.assertIn("My best guess",reply)
     def test_voice_correction(self):
         reply,spoken=voice_feedback("I goed home",0.9,lambda t:'{"category":"english_error","correction":"I went home.","topic":"past"}')
         self.assertEqual(spoken,"I went home.")
@@ -80,3 +80,33 @@ class MultimodalTests(unittest.TestCase):
         result=lesson(raw,decide(raw))
         self.assertNotIn("evil.example",result)
         self.assertNotIn("bad.example",result)
+
+    def test_ambiguous_voice_alternatives(self):
+        raw=json.dumps({"category":"unclear","possible_meaning":"Thank you very much, my friend.","alternate_meaning":"I like you very much, my friend."})
+        reply,spoken=voice_feedback("Hi que o very much my friend",None,lambda t:raw)
+        self.assertIn("Possible meanings (not confirmed)",reply)
+        self.assertIn("Thank you very much, my friend.",reply)
+        self.assertIn("Which meaning did you intend?",reply)
+        self.assertFalse(spoken)
+    def test_empty_transcript_has_help(self):
+        reply,spoken=voice_feedback("",None,lambda t:self.fail("no inference"))
+        self.assertIn("Speaking practice:",reply)
+        self.assertFalse(spoken)
+    def test_oversize_voice_can_receive_notice(self):
+        message={"chat":{"id":-123,"type":"supergroup"},"from":{"id":1},"message_id":5,"voice":{"file_id":"abc","duration":60}}
+        self.assertTrue(voice_candidate(message,-123))
+        self.assertFalse(voice_eligible(message,-123))
+        self.assertFalse(voice_candidate(message,-999))
+        calls=[]
+        voice_notice("fake",-123,message,"Please shorten the recording.",lambda t,m,p:calls.append(p))
+        self.assertTrue(calls[0]["reply_parameters"]["allow_sending_without_reply"])
+    def test_uncertain_hypotheses_preserved(self):
+        class Client:
+            def invoke(self, **kwargs):
+                return {"Payload":io.BytesIO(b'{"status":"uncertain","text":"que o","alternate":"thank you"}')}
+        with patch.dict(os.environ,{"WHISPER_FUNCTION":"test-worker"}):
+            self.assertEqual(transcribe_bytes(b"OggS",Client()),("que o | thank you",0.4))
+    def test_uncertain_correction_is_tentative(self):
+        reply,spoken=voice_feedback("ai laik inglish",0.4,lambda t:'{"category":"phonetic","correction":"I like English.","topic":"pronunciation"}')
+        self.assertIn("My best guess (please confirm)",reply)
+        self.assertEqual(spoken,"I like English.")
