@@ -1,6 +1,8 @@
 import unittest
 import json
 from src.telegram_runtime import handle_update, handle_pronunciation, pronunciation_target
+from src.knowledge import passage_parts, passage_batches, message_chunks
+from src.inference import review_passage
 
 class TelegramTests(unittest.TestCase):
     def setUp(self):
@@ -80,3 +82,48 @@ class TelegramTests(unittest.TestCase):
         handle_update(self.update,-123,"fake",lambda t:'{}',self.send)
         self.assertNotIn("That's correct!",self.calls[0][1]["text"])
         self.assertNotIn("reply_markup",self.calls[0][1])
+
+    def test_long_passage_full_delivery(self):
+        p1="I goed home yesterday. "*15
+        p2="She don't like coffee. "*12
+        p3="What do you think? "*10
+        self.update["message"]["text"]="\n".join([p1,p2,p3])
+        def review(parts):
+            rows=[]
+            for i,p in enumerate(parts,1):
+                corrected=p.replace("goed","went").replace("don't","doesn't")
+                errors=[] if corrected==p else [{"original":"goed" if "goed" in p else "don't","corrected":"went" if "goed" in p else "doesn't","why":"Use the correct verb form.","topic":"past"}]
+                rows.append({"id":i,"corrected":corrected,"errors":errors})
+            return {"paragraphs":rows,"conversational_reply":"Keep practicing!"}
+        self.assertEqual(handle_update(self.update,-123,"fake",lambda t:self.fail("short model"),self.send,review),"passage")
+        texts=[p["text"] for m,p in self.calls]
+        self.assertTrue(any("Keep practicing!" in t for t in texts))
+        self.assertTrue(any("went home" in t for t in texts))
+        self.assertTrue(any("doesn't like" in t for t in texts))
+        self.assertTrue(any("What do you think?" in t for t in texts))
+        self.assertTrue(any(p.get("reply_markup") for m,p in self.calls))
+        self.assertTrue(all(len(t)<=4096 for t in texts))
+    def test_long_passage_partial_failure(self):
+        self.update["message"]["text"]="I goed home. "*45
+        result=handle_update(self.update,-123,"fake",self.infer,self.send,lambda p:None)
+        self.assertEqual(result,"partial_passage")
+        self.assertTrue(all("could not complete" in p["text"] for m,p in self.calls))
+    def test_passage_segmentation_and_bounds(self):
+        text=("This is a sentence. "*225).strip()
+        parts=passage_parts(text)
+        self.assertEqual(" ".join(parts),text)
+        self.assertTrue(all(len(p)<=480 for p in parts))
+        self.assertTrue(all(sum(map(len,b))<=1600 for b in passage_batches(parts)))
+        self.assertEqual("".join(message_chunks("a"*7001)),"a"*7001)
+    def test_passage_model_truncation_and_missing_paragraphs(self):
+        class Client:
+            def __init__(self,stop,rows): self.stop=stop; self.rows=rows
+            def converse(self,**kw):
+                self.limit=kw["inferenceConfig"]["maxTokens"]
+                return {"stopReason":self.stop,"output":{"message":{"content":[{"text":json.dumps({"paragraphs":self.rows})}]}}}
+        client=Client("max_tokens",[])
+        self.assertIsNone(review_passage(["x"*600],client))
+        self.assertGreater(client.limit,550)
+        self.assertIsNone(review_passage(["one","two"],Client("end_turn",[{"id":1,"corrected":"one","errors":[]}])))
+        self.assertIsNone(review_passage(["one"],Client("end_turn",[{"id":1,"corrected":"changed","errors":[]}])))
+
