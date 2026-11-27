@@ -53,6 +53,10 @@ CATALOG = {
     "A1 listening practice",
     "https://learnenglish.britishcouncil.org/free-resources/listening/a1"
   ],
+  "greetings": ["Meeting new people — A1 speaking", "https://learnenglish.britishcouncil.org/free-resources/speaking/a1/meeting-new-people"],
+  "pronunciation": ["English sounds and phonemic chart", "https://learnenglish.britishcouncil.org/apps/learnenglish-sounds-right"],
+  "conditionals": ["Intermediate grammar: conditionals", "https://learnenglish.britishcouncil.org/free-resources/grammar/b1-b2"],
+  "modals": ["Modal verbs", "https://learnenglish.britishcouncil.org/free-resources/grammar/english-grammar-reference/verbs"],
   "general": [
     "A1–A2 grammar and exercises",
     "https://learnenglish.britishcouncil.org/free-resources/grammar/a1-a2"
@@ -84,3 +88,25 @@ def lesson(raw, decision):
     practice=safe_text(data.get("practice"),180)
     if practice: result+="\n\nTry it: "+practice
     return result+"\n\nLearn more — "+title+":\n"+url
+
+def command_reply(command, argument=""):
+    """Free deterministic study commands; no model or external fetch."""
+    if command in ("/start","/help"):
+        return ("TechVerse English Tutor\n"
+                "Write in English, even if you make mistakes. I can suggest corrections, examples and exercises.\n"
+                "/learn — browse lesson topics\n"
+                "/learn past — open a specific lesson\n"
+                "/listen I love English. — hear an English sentence\n"
+                "/rules — group rules\n"
+                "Send a voice note up to 30 seconds when voice recognition is enabled.")
+    if command=="/rules":
+        return ("English only, please. Mistakes, mixed phrases and attempts are welcome! "
+                "I suggest corrections; if I am unsure, I ask you to rephrase. "
+                "Do not send passwords, personal information or private recordings.")
+    if command=="/learn":
+        topic=argument.strip().lower().replace(" ","_")
+        if topic in CATALOG:
+            title,url=CATALOG[topic]
+            return "Learn more — "+title+":\n"+url
+        return "Study topics: "+TOPICS+"\nUse /learn past or another topic from the list."
+    return ""
