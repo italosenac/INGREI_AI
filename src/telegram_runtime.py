@@ -132,7 +132,7 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram, review=
     target=" ".join(safe_text(spoken,2000).split())
     if target and len(target)<=500 and not foreign_evidence(target):
         payload["text"]+="\n\n🔊 Pronunciation: "+target+"\nWould you like to hear the pronunciation?"
-        payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v1"}]]}
+        payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v2"}]]}
     send(token,"sendMessage",payload)
     return decision.action
 
@@ -173,8 +173,8 @@ def handle_pronunciation(callback,group_id,token,send=None,play=None,quota=None)
     target=pronunciation_target(callback,group_id)
     if not target: return "ignored"
     cid=callback["id"]
-    if foreign_evidence(target):
-        send(token,"answerCallbackQuery",{"callback_query_id":cid,"text":"This is not English. Please resend the text for translation.","show_alert":True})
+    if callback.get("data")=="pronounce:v1" or foreign_evidence(target):
+        send(token,"answerCallbackQuery",{"callback_query_id":cid,"text":"This pronunciation offer is outdated or not English. Please resend the sentence for a new English version.","show_alert":True})
         return "foreign"
     if not quota("playback",((60,2),(86400,30))):
         send(token,"answerCallbackQuery",{"callback_query_id":cid,"text":"Listening limit reached. Try again later.","show_alert":True})
