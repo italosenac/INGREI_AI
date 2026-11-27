@@ -120,3 +120,51 @@ def conversation(raw):
     except (ValueError,TypeError,AttributeError):
         return ""
 
+
+def passage_parts(text, limit=480):
+    """Split at sentence/word boundaries; never drop a non-whitespace character."""
+    import re
+    parts=[]
+    for paragraph in re.split(r"\n+",text.strip()):
+        paragraph=paragraph.strip()
+        while len(paragraph)>limit:
+            cut=max(paragraph.rfind(mark,0,limit+1) for mark in (". ","? ","! "))
+            cut=cut+1 if cut>limit//3 else paragraph.rfind(" ",0,limit+1)
+            if cut<=0: cut=limit
+            parts.append(paragraph[:cut].strip())
+            paragraph=paragraph[cut:].strip()
+        if paragraph: parts.append(paragraph)
+    return parts
+
+def passage_batches(parts, limit=1600):
+    batches=[]
+    for part in parts:
+        if not batches or sum(len(p) for p in batches[-1])+len(part)>limit:
+            batches.append([])
+        batches[-1].append(part)
+    return batches
+
+def passage_notes(row):
+    notes=[]
+    topics=[]
+    aliases={"morphology":"present","lexis":"vocabulary","syntax":"word_order","agreement":"present","false_cognates":"vocabulary"}
+    for e in row["errors"]:
+        original=safe_text(e["original"],180)
+        corrected=safe_text(e["corrected"],180)
+        why=safe_text(e["why"],260)
+        if original and corrected and why:
+            notes.append("• "+original+" → "+corrected+" — "+why)
+        topic=e.get("topic")
+        if isinstance(topic,str):
+            topic=aliases.get(topic,topic)
+            if topic in CATALOG and topic not in topics: topics.append(topic)
+    return notes,topics
+
+def message_chunks(text,limit=3300):
+    """Telegram-safe split without dropping the tail."""
+    while len(text)>limit:
+        cut=text.rfind("\n",0,limit+1)
+        if cut<=0: cut=limit
+        yield text[:cut]
+        text=text[cut:].lstrip("\n")
+    if text: yield text
