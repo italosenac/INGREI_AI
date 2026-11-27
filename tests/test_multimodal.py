@@ -6,7 +6,7 @@ from src.speech import voice_allowed, voice_feedback, transcribe_bytes
 from unittest.mock import patch
 import io
 import os
-from src.telegram_runtime import voice_eligible, handle_update, voice_candidate, voice_notice
+from src.telegram_runtime import voice_eligible, handle_update, voice_candidate, voice_notice, retry_target
 
 class MultimodalTests(unittest.TestCase):
     def test_topic_link(self):
@@ -110,3 +110,11 @@ class MultimodalTests(unittest.TestCase):
         reply,spoken=voice_feedback("ai laik inglish",0.4,lambda t:'{"category":"phonetic","correction":"I like English.","topic":"pronunciation"}')
         self.assertIn("My best guess (please confirm)",reply)
         self.assertEqual(spoken,"I like English.")
+
+    def test_retry_only_authorized_voice(self):
+        original={"chat":{"id":-123,"type":"supergroup"},"from":{"id":1},"message_id":5,"voice":{"file_id":"abc","duration":10}}
+        msg={"chat":{"id":-123,"type":"supergroup"},"from":{"id":1},"message_id":6,"text":"/retry","reply_to_message":original}
+        self.assertEqual(retry_target(msg,-123),original)
+        self.assertIsNone(retry_target(msg,-999))
+        self.assertIsNone(retry_target(dict(msg,text="/retry@otherbot"),-123))
+        self.assertIsNone(retry_target(dict(msg,reply_to_message=dict(original,chat={"id":-999,"type":"supergroup"})),-123))
