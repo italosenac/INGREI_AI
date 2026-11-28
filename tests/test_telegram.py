@@ -1,6 +1,6 @@
 import unittest
 import json
-from src.telegram_runtime import handle_update, handle_pronunciation, pronunciation_target
+from src.telegram_runtime import handle_update, handle_pronunciation, pronunciation_target, authorized_group, enrollment_code, enroll_group
 from src.knowledge import passage_parts, passage_batches, message_chunks
 from src.inference import review_passage, language_evidence, guard_language, analyze, foreign_evidence
 
@@ -311,3 +311,41 @@ class TelegramTests(unittest.TestCase):
         handle_update(self.update,-123,"fake",lambda t:raw,self.send)
         self.assertIn("[Blarg: desconhecido]",self.calls[0][1]["text"])
         self.assertNotIn("reply_markup",self.calls[0][1])
+
+    def test_multigroup_registry_isolation(self):
+        class DB:
+            def get_item(self,**kw):
+                return {"Item":{"groups":{"SS":["-456","-789"]}}}
+        cfg={"GROUP_ID":"-123"}
+        import os
+        from unittest.mock import patch
+        with patch.dict(os.environ,{"DEDUP_TABLE":"fake"}):
+            for gid,expected in [(-123,-123),(-456,-456),(-789,-789),(-999,0),(123,0)]:
+                msg={"chat":{"id":gid,"type":"supergroup"}}
+                self.assertEqual(authorized_group(cfg,msg,DB()),expected)
+            self.assertEqual(authorized_group(cfg,{"chat":{"id":-456,"type":"private"}},DB()),0)
+    def test_multigroup_enrollment_one_time_and_admin(self):
+        import os,hashlib
+        from unittest.mock import patch
+        code="AbCdEfGhIjKlMnOpQrStUvWx"
+        class DB:
+            pending=True
+            def get_item(self,**kw):
+                return {"Item":{"code_hash":{"S":hashlib.sha256(code.encode()).hexdigest()},"code_until":{"N":"1000"}} if self.pending else {"groups":{"SS":["-456"]}}}
+            def update_item(self,**kw):
+                self.pending=False
+        db=DB()
+        msg={"chat":{"id":-456,"type":"group"},"from":{"id":7},"text":"/authorize "+code}
+        status=["member"]
+        def send(token,method,payload):
+            if method=="getMe": return {"id":8}
+            if method=="getChatMember": return {"status":status[0] if payload["user_id"]==7 else "administrator"}
+            return {}
+        with patch.dict(os.environ,{"DEDUP_TABLE":"fake"}):
+            self.assertEqual(enrollment_code(msg),code)
+            self.assertFalse(enroll_group(msg,"fake",send,db,500))
+            status[0]="administrator"
+            self.assertFalse(enroll_group(msg,"fake",send,db,1000))
+            self.assertTrue(enroll_group(msg,"fake",send,db,500))
+            self.assertFalse(enroll_group(msg,"fake",send,db,500))
+            self.assertEqual(authorized_group({"GROUP_ID":"-123"},msg,db),-456)
