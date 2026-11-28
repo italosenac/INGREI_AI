@@ -26,6 +26,66 @@ def config():
     secret=boto3.client("secretsmanager").get_secret_value(SecretId=os.environ["SECRET_ARN"])
     return json.loads(secret["SecretString"])
 
+GROUP_REGISTRY_KEY="group:authorization:v1"
+
+def candidate_group(message):
+    if not isinstance(message,dict): return 0
+    chat=message.get("chat",{})
+    if not isinstance(chat,dict) or chat.get("type") not in ("group","supergroup"): return 0
+    gid=chat.get("id")
+    return gid if type(gid) is int and gid<0 else 0
+
+def group_registry(db=None):
+    if db is None:
+        import boto3
+        db=boto3.client("dynamodb")
+    return db.get_item(TableName=os.environ["DEDUP_TABLE"],Key={"id":{"S":GROUP_REGISTRY_KEY}},ConsistentRead=True).get("Item",{})
+
+def authorized_group(cfg,message,db=None):
+    gid=candidate_group(message)
+    if not gid: return 0
+    if gid==int(cfg.get("GROUP_ID",0)): return gid
+    return gid if str(gid) in group_registry(db).get("groups",{}).get("SS",[]) else 0
+
+def enrollment_code(message):
+    if not candidate_group(message): return ""
+    actor=message.get("from",{})
+    if not isinstance(actor,dict) or not actor.get("id") or actor.get("is_bot"): return ""
+    text=message.get("text","")
+    if not isinstance(text,str): return ""
+    import re
+    match=re.fullmatch(r"/authorize(?:@techverseenglishbot)? ([A-Za-z0-9_-]{24})",text.strip(),re.I)
+    return match[1] if match else ""
+
+def enroll_group(message,token,send=None,db=None,now=None):
+    import hashlib
+    if db is None:
+        import boto3
+        db=boto3.client("dynamodb")
+    send=send or telegram
+    now=int(datetime.datetime.now(datetime.timezone.utc).timestamp()) if now is None else now
+    gid=candidate_group(message)
+    code=enrollment_code(message)
+    if not code: return False
+    digest=hashlib.sha256(code.encode()).hexdigest()
+    pending=group_registry(db)
+    if not hmac.compare_digest(pending.get("code_hash",{}).get("S",""),digest) or int(pending.get("code_until",{}).get("N","0"))<=now: return False
+    user=send(token,"getChatMember",{"chat_id":gid,"user_id":message["from"]["id"]})
+    me=send(token,"getMe",{})
+    bot=send(token,"getChatMember",{"chat_id":gid,"user_id":me["id"]})
+    if user.get("status") not in ("creator","administrator") or bot.get("status")!="administrator": return False
+    try:
+        db.update_item(TableName=os.environ["DEDUP_TABLE"],Key={"id":{"S":GROUP_REGISTRY_KEY}},
+            UpdateExpression="REMOVE code_hash, code_until ADD #groups :g",
+            ConditionExpression="code_hash = :h AND code_until > :n",
+            ExpressionAttributeNames={"#groups":"groups"},
+            ExpressionAttributeValues={":g":{"SS":[str(gid)]},":h":{"S":digest},":n":{"N":str(now)}})
+    except Exception as exc:
+        if getattr(exc,"response",{}).get("Error",{}).get("Code")=="ConditionalCheckFailedException": return False
+        raise
+    send(token,"sendMessage",{"chat_id":gid,"text":"✅ TechVerse English Tutor is now active in this group! Send English text or a voice note to practice. /help shows the available commands."})
+    return True
+
 def is_long_text(text):
     return len(text)>450 or len([p for p in text.splitlines() if p.strip()])>=3
 
@@ -211,8 +271,8 @@ def handler(event, context):
                 return {"status":"delivered","text_message_id":sent["message_id"],"voice_message_id":voice_id}
             if event.get("operation") == "passage_worker":
                 if expired(): return {"status":"expired"}
-                group_id=int(cfg.get("GROUP_ID",0))
                 message=event.get("message",{})
+                group_id=authorized_group(cfg,message)
                 if not eligible(message,group_id) or not is_long_text(message["text"]): return {"status":"ignored"}
                 try:
                     return {"status":handle_passage(message,group_id,token,telegram)}
@@ -223,8 +283,8 @@ def handler(event, context):
                     return {"status":"error"}
             if event.get("operation") == "voice_worker":
                 if expired(): return {"status":"expired"}
-                group_id=int(cfg.get("GROUP_ID",0))
                 message=event.get("message",{})
+                group_id=authorized_group(cfg,message)
                 if not voice_eligible(message,group_id): return {"status":"ignored"}
                 try:
                     outcome=process_voice(token,group_id,message,telegram)
@@ -275,12 +335,15 @@ def handler(event, context):
         if event.get("isBase64Encoded"):
             body=base64.b64decode(body).decode()
         update=json.loads(body)
-        group_id=int(cfg.get("GROUP_ID",0))
+        callback=update.get("callback_query")
+        message=update.get("message",{})
+        if callback is None and enrollment_code(message):
+            enroll_group(message,token)
+            return response(200)
+        group_id=authorized_group(cfg,callback.get("message",{}) if isinstance(callback,dict) else message)
         if not group_id:
             return response(200)
-        callback=update.get("callback_query")
         if callback is not None and not pronunciation_target(callback,group_id): return response(200)
-        message=update.get("message",{})
         retry=retry_target(message,group_id)
         is_voice=voice_candidate(message,group_id) or retry is not None
         if callback is None and not is_voice and not eligible(message,group_id):
