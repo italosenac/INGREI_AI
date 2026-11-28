@@ -5,7 +5,7 @@ import os
 import re
 import urllib.request
 import uuid
-from .knowledge import lesson, safe_text, CATALOG, conversation
+from .knowledge import lesson, safe_text, CATALOG, conversation, bilingual_from_raw
 from .policy import decide
 from .inference import analyze_voice, foreign_evidence, guard_language
 
@@ -81,6 +81,8 @@ def voice_feedback(text, confidence, infer=analyze_voice):
     d=decide(raw)
     prefix=("Possible words I recognized: " if tentative else "What I understood: ")+safe_text(text,1000)+"\n\n"
     if not tentative and conversation(raw): prefix+=conversation(raw)+"\n\n"
+    bilingual=bilingual_from_raw(raw,text,d.correction or (text if not tentative and d.action=="allow" else ""))
+    if bilingual: prefix+=bilingual+"\n\n"
     if d.action=="clarify":
         try:
             data=json.loads(raw)
