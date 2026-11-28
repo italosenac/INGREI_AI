@@ -168,3 +168,21 @@ def message_chunks(text,limit=3300):
         yield text[:cut]
         text=text[cut:].lstrip("\n")
     if text: yield text
+
+def bilingual_notes(data, original="", corrected=""):
+    if not isinstance(data,dict): return ""
+    literal=safe_text(data.get("literal_pt"),1600)
+    natural=safe_text(data.get("natural_pt"),1600)
+    reply=safe_text(data.get("reply_pt"),600)
+    parts=[]
+    if literal: parts.append("🇧🇷 Tradução literal (como foi escrito): "+literal)
+    elif original and data.get("category"): parts.append("🇧🇷 Tradução literal: não foi possível confirmar nesta análise.")
+    if natural and corrected and (natural!=literal or corrected!=original):
+        parts.append("🇧🇷 Sentido da versão em inglês: "+natural)
+    if reply: parts.append("🇧🇷 Resposta do tutor: "+reply)
+    return "\n\n".join(parts)
+
+def bilingual_from_raw(raw,original="",corrected=""):
+    import json
+    try: return bilingual_notes(json.loads(raw),original,corrected)
+    except (ValueError,TypeError): return ""
