@@ -7,7 +7,7 @@ import os
 import urllib.request
 from .policy import decide, eligible
 from .inference import analyze, review_passage, guard_language, foreign_evidence, english_evidence
-from .knowledge import lesson, command_reply, conversation, safe_text, passage_parts, passage_batches, passage_notes, message_chunks, CATALOG
+from .knowledge import lesson, command_reply, conversation, safe_text, passage_parts, passage_batches, passage_notes, message_chunks, CATALOG, bilingual_notes, bilingual_from_raw
 from .speech import process_voice, voice_allowed, send_voice
 
 def telegram(token, method, payload):
@@ -54,7 +54,9 @@ def handle_passage(message,group_id,token,send,review=None):
                 results.extend((p,None) for p in group)
                 continue
             reply=safe_text(data.get("conversational_reply"),700)
-            if reply: replies.append(reply)
+            if reply:
+                reply_pt=safe_text(data.get("reply_pt"),600)
+                replies.append(reply+("\n\n🇧🇷 Resposta do tutor: "+reply_pt if reply_pt else ""))
             results.extend(zip(group,data["paragraphs"]))
     def post(text,target=""):
         payload={"chat_id":group_id,"text":text,
@@ -77,6 +79,8 @@ def handle_passage(message,group_id,token,send,review=None):
         notes,topics=passage_notes(row)
         header=label+(" — Suggested correction:" if row["errors"] else " — Correct!")
         body=header+"\n\n"+corrected
+        bilingual=bilingual_notes(row,original,corrected)
+        if bilingual: body+="\n\n"+bilingual
         if notes: body+="\n\nWhy:\n"+"\n".join(notes)
         if topics: body+="\n\nLearn more:\n"+"\n".join(CATALOG[t][0]+": "+CATALOG[t][1] for t in topics)
         targets=[" ".join(t.split()) for t in passage_parts(corrected,480) if t.strip()]
@@ -126,11 +130,13 @@ def handle_update(update, group_id, token, infer=analyze, send=telegram, review=
     else:
         reply=(chat_reply+"\n\n" if chat_reply else "")+lesson(raw,decision)
         if decision.action in ("correct","warn"): spoken=decision.correction
-    payload={"chat_id":group_id,"text":reply[:3000],
+    bilingual=bilingual_from_raw(raw,text,spoken)
+    if bilingual: reply+="\n\n"+bilingual
+    payload={"chat_id":group_id,"text":reply[:3300],
         "reply_parameters":{"message_id":message["message_id"],"allow_sending_without_reply":True},
         "link_preview_options":{"is_disabled":True}}
     target=" ".join(safe_text(spoken,2000).split())
-    if target and len(target)<=500 and not foreign_evidence(target):
+    if target and len(target)<=500 and not foreign_evidence(target) and english_evidence(target):
         payload["text"]+="\n\n🔊 Pronunciation: "+target+"\nWould you like to hear the pronunciation?"
         payload["reply_markup"]={"inline_keyboard":[[{"text":"🔊 Yes, listen","callback_data":"pronounce:v2"}]]}
     send(token,"sendMessage",payload)
