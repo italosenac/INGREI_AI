@@ -266,3 +266,48 @@ class TelegramTests(unittest.TestCase):
     def test_old_perfeito_pronunciation_blocked(self):
         cb={"id":"cb1","data":"pronounce:v2","from":{"id":7},"message":{"chat":{"id":-123,"type":"supergroup"},"from":{"is_bot":True,"username":"techverseEnglishBot"},"message_id":8,"text":"Old reply\n\n🔊 Pronunciation: Perfeito\nWould you like to hear the pronunciation?"}}
         self.assertEqual(handle_pronunciation(cb,-123,"fake",self.send,lambda *a:self.fail("foreign playback"),lambda *a:True),"foreign")
+
+    def test_bilingual_local_grammar(self):
+        class NoModel:
+            def converse(self,**kw): raise AssertionError("local rule should not call model")
+        data=json.loads(analyze("I goed to school yesterday.",NoModel()))
+        self.assertIn("goed",data["literal_pt"])
+        self.assertEqual(data["natural_pt"],"Eu fui à escola ontem.")
+        self.update["message"]["text"]="I goed to school yesterday."
+        handle_update(self.update,-123,"fake",lambda t:analyze(t,NoModel()),self.send)
+        reply=self.calls[0][1]["text"]
+        self.assertIn("Tradução literal",reply)
+        self.assertIn("Sentido da versão em inglês: Eu fui à escola ontem.",reply)
+        self.assertEqual(pronunciation_target({"data":"pronounce:v2","from":{"id":7},"message":{"chat":{"id":-123,"type":"supergroup"},"from":{"is_bot":True,"username":"techverseEnglishBot"},"text":reply}},-123),"I went to school yesterday.")
+    def test_bilingual_foreign_and_correct_local(self):
+        class NoModel:
+            def converse(self,**kw): raise AssertionError("local")
+        for source,expected in [("Perfeito","Perfeito"),("Perfecto","Perfeito!"),("I like English.","Eu gosto de inglês.")]:
+            result=json.loads(analyze(source,NoModel()))
+            self.assertEqual(result["literal_pt"],expected)
+            self.assertTrue(result["natural_pt"])
+    def test_missing_bilingual_fields_retried(self):
+        class Client:
+            calls=0
+            def converse(self,**kw):
+                self.calls+=1
+                d={"category":"correct","source_language":"en","conversational_reply":"Sure!"}
+                if self.calls==2: d.update(literal_pt="Eu gosto de ler.",natural_pt="Eu gosto de ler.")
+                return {"stopReason":"end_turn","output":{"message":{"content":[{"text":json.dumps(d)}]}}}
+        client=Client()
+        data=json.loads(analyze("I like reading.",client))
+        self.assertEqual(data["literal_pt"],"Eu gosto de ler.")
+        self.assertEqual(client.calls,2)
+    def test_bilingual_passage_validation(self):
+        class Client:
+            def converse(self,**kw):
+                d={"paragraphs":[{"id":1,"corrected":"I like books.","source_language":"en","errors":[],"literal_pt":"Eu gosto de livros.","natural_pt":"Eu gosto de livros."}],"conversational_reply":"Nice!"}
+                return {"stopReason":"end_turn","output":{"message":{"content":[{"text":json.dumps(d)}]}}}
+        result=review_passage(["I like books."],Client())
+        self.assertEqual(result["paragraphs"][0]["literal_pt"],"Eu gosto de livros.")
+    def test_bilingual_uncertain_preserves_gloss(self):
+        self.update["message"]["text"]="Blarg foo"
+        raw=json.dumps({"category":"unclear","literal_pt":"[Blarg: desconhecido] [foo: desconhecido]","conversational_reply":"Could you explain what you mean?"})
+        handle_update(self.update,-123,"fake",lambda t:raw,self.send)
+        self.assertIn("[Blarg: desconhecido]",self.calls[0][1]["text"])
+        self.assertNotIn("reply_markup",self.calls[0][1])
